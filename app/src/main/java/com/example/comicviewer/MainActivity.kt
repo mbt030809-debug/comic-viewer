@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private var gap get() = prefs.getInt("gap", 8); set(v) = prefs.edit().putInt("gap", v).apply() // 두쪽 중간 여백(px)
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
+    private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply() // 버튼 1회 이동 거리(화면 높이 %)
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply() // px/sec
 
     private var pageAnim: ValueAnimator? = null
@@ -120,7 +121,7 @@ class MainActivity : Activity() {
 
     // ---- 스크롤 ----
     private fun pageScroll(dir: Int) {
-        val dist = (web.height * (if (two) 1.0f else 0.95f)).toInt() * dir
+        val dist = (web.height * pageRatio / 100f).toInt() * dir
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
@@ -208,8 +209,11 @@ class MainActivity : Activity() {
         sw("오른쪽→왼쪽 (만화책 방식)", rtl) { rtl = it; needInject = true }
         bar("두쪽 중간 여백 ", 60, gap, { "${it}px" }) { gap = it; needInject = true }
         sw("광고 도메인 차단", adblock) { adblock = it }
-        bar("페이지 스크롤 부드러움 ", 20, smoothMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { smoothMs = it * 100 }
-        bar("자동 스크롤 속도 ", 58, (autoSpeed - 20) / 10, { "${20 + it * 10}px/s" }) { autoSpeed = 20 + it * 10 }
+        box.addView(TextView(this).apply { text = "\n[▲▼ 버튼 / 볼륨키]"; setTypeface(null, android.graphics.Typeface.BOLD) })
+        bar("1회 이동 거리(화면 높이 대비) ", 90, pageRatio - 10, { "${it + 10}%" }) { pageRatio = it + 10 }
+        bar("이동 소요 시간(길수록 천천히 부드럽게) ", 20, smoothMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { smoothMs = it * 100 }
+        box.addView(TextView(this).apply { text = "\n[자동 버튼: 계속 흐르는 스크롤]"; setTypeface(null, android.graphics.Typeface.BOLD) })
+        bar("자동 스크롤 속도 ", 58, (autoSpeed - 20) / 10, { "${20 + it * 10}px/초" }) { autoSpeed = 20 + it * 10 }
         AlertDialog.Builder(this).setTitle("설정").setView(box).setPositiveButton("확인") { _, _ ->
             updateTwoBtn()
             if (needReload) web.reload() else if (needInject) injectScript()
