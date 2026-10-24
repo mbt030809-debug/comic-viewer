@@ -219,7 +219,7 @@ class MainActivity : Activity() {
                 else -> true
             }
         }
-        val tick = object : Runnable { override fun run() { updateThumb(); track.postDelayed(this, 1000) } }
+        val tick = object : Runnable { override fun run() { updateThumb(); checkTitle(); track.postDelayed(this, 1000) } }
         track.postDelayed(tick, 1000)
     }
     private fun updateThumb() {
@@ -334,7 +334,7 @@ class MainActivity : Activity() {
         val (name, ep) = parseTitle(title) ?: return
         val key = norm(name) + "|" + ep
         if (key == curKey) return
-        curKey = key
+        curKey = key; saving = false // 새 화로 바뀌면(SPA 포함) 복원이 끝나기 전엔 저장하지 않음
         val l = loadSeries()
         val s = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
         s.name = name; s.last = ep; s.max = maxOf(s.max, ep); s.eps.add(ep); s.url = web.url ?: s.url; s.time = System.currentTimeMillis()
