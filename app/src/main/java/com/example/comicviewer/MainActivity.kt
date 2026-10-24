@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
     private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply()
+    private var pageRatio2 get() = prefs.getInt("ratio2", 100); set(v) = prefs.edit().putInt("ratio2", v).apply() // 두쪽 보기 1회 이동 거리(%)
+    private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -168,6 +170,7 @@ class MainActivity : Activity() {
         if (was && !v) web.reload() else injectScript()
     }
     private fun injectScript() {
+        if (two) quietUntil = System.currentTimeMillis() + 9000
         web.evaluateJavascript(
             SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__GAP__", "$gap"), null
         )
@@ -230,6 +233,7 @@ class MainActivity : Activity() {
     private val saveRun = Runnable { savePosNow() }
     private fun onScrolled(y: Int, dy: Int) {
         updateThumb()
+        if (System.currentTimeMillis() < quietUntil) return
         if (autoFull && System.currentTimeMillis() > fullLockUntil) {
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
             if (dyAcc > 40) setFull(true) else if (dyAcc < -40 || y < 20) setFull(false)
@@ -252,7 +256,7 @@ class MainActivity : Activity() {
     private fun pageScroll(dir: Int) {
         if (dir > 0) { if (autoFull) setFull(true); if (autoNext && atBottom()) { goNext(); return } }
         else if (autoFull) setFull(false)
-        val dist = (web.height * pageRatio / 100f).toInt() * dir
+        val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
@@ -412,7 +416,9 @@ class MainActivity : Activity() {
             .setPositiveButton("현재 페이지 추가") { _, _ ->
                 val u = web.url ?: return@setPositiveButton
                 if (list.none { it.second == u }) {
-                    list.add((web.title?.takeIf { it.isNotBlank() } ?: u) to u); saveBookmarks(list)
+                    val t = web.title?.takeIf { it.isNotBlank() } ?: u
+                    val label = parseTitle(t)?.let { (n, e) -> "$n ${e}화" } ?: t // 예: "웹툰명 12화"
+                    list.add(label to u); saveBookmarks(list)
                     Toast.makeText(this, "북마크 추가", Toast.LENGTH_SHORT).show()
                 } else Toast.makeText(this, "이미 있음", Toast.LENGTH_SHORT).show()
             }
@@ -456,7 +462,8 @@ class MainActivity : Activity() {
         sw("스크롤 시 전체화면 (아래=숨김 / 위=표시)", autoFull) { autoFull = it }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
         head("[▲▼ 버튼 / 볼륨키]")
-        bar("1회 이동 거리(화면 높이 대비) ", 10, 100, pageRatio, { "$it%" }) { pageRatio = it }
+        bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
+        bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
         head("[자동 버튼: 계속 흐르는 스크롤]")
         bar("자동 스크롤 속도 ", 20, 600, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
@@ -495,7 +502,7 @@ class MainActivity : Activity() {
         private const val SCRIPT = """(function(){
 var o=window.__cvOpts=window.__cvOpts||{};o.two=__TWO__;o.rtl=__RTL__;o.gap=__GAP__;
 if(window.__cvTimer){window.__cvTick();return}
-var diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
+var anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];return r}catch(e){return {urls:[],idx:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
@@ -503,6 +510,17 @@ function big(i){var w=i.naturalWidth,h=i.naturalHeight;
  if(!w||!h||w<350||h<100||w/h>8)return false;
  var r=i.getBoundingClientRect();
  return r.width==0||r.width>=window.innerWidth*0.6;}
+function takeAnchor(bigs){anchorTaken=1;
+ for(var n=0;n<bigs.length;n++){var r=bigs[n].getBoundingClientRect();
+  if(r.bottom>1&&r.height>0){anchor={cvi:bigs[n].__cvi,frac:r.top<0?(-r.top/r.height):0};return}}
+ var h=document.documentElement.scrollHeight;if(h>0)anchor={ratio:window.scrollY/h}}
+function restoreAnchor(){
+ if(!anchor||anchorDone||!root)return;anchorTries++;var y=null;
+ if(anchor.cvi!==undefined){var cl=null,ready=true,k=strips[0].children;
+  for(var n=0;n<k.length;n++){if(!k[n].complete||!k[n].naturalHeight)ready=false;if(k[n].__cvi===anchor.cvi){cl=k[n];break}}
+  if(cl&&ready)y=cl.offsetTop+anchor.frac*cl.offsetHeight;}
+ else if(strips[0].offsetHeight>window.innerHeight)y=anchor.ratio*strips[0].offsetHeight;
+ if(y!==null||anchorTries>40){if(y!==null){window.scrollTo(0,y);upd()}anchorDone=1}}
 function lazySrc(i){var n=['data-src','data-original','data-lazy-src','data-lazy','data-url','data-origin','data-echo','lazy-src','data-actualsrc'];
  for(var k=0;k<n.length;k++){var v=i.getAttribute(n[k]);if(v&&/^(https?:)?\/\/|^\/|\.(jpe?g|png|webp|gif)/i.test(v))return v}
  return null}
@@ -554,9 +572,10 @@ function tick0(){
   if(i.__cvhid){i.style.display='';i.__cvhid=0}
  });
  if(!o.two)return;
+ if(!anchorTaken&&!root)takeAnchor(bigs);
  if(!root){if(swept==0&&(bigs.length<4||needSweep(imgs))){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
- upd();
+ upd();restoreAnchor();
  if(!window.__cvDiag&&++diag>8&&!strips[0].children.length){window.__cvDiag=1;
   var d=box('cv-diag','bottom:0;background:#c00');d.textContent='두쪽 보기: 큰 이미지를 찾지 못했습니다 / '+info();
   setTimeout(function(){d.remove()},6000);}}
