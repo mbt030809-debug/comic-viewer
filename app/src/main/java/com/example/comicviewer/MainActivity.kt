@@ -105,6 +105,7 @@ class MainActivity : Activity() {
                 handler.postDelayed({ checkTitle() }, 300)
                 handler.postDelayed({ checkTitle() }, 2500)
                 if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) }
+                else if (auto && autoPageMode) handler.postDelayed(pageAutoRun, 1500) // 페이지 이동으로 지워진 방식2 예약 복구
             }
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 if (adblock) {
@@ -369,7 +370,7 @@ class MainActivity : Activity() {
     private val saveRun = Runnable { savePosNow() }
     private fun onScrolled(y: Int, dy: Int) {
         updateThumb()
-        if (System.currentTimeMillis() < quietUntil) return
+        if (System.currentTimeMillis() < quietUntil && !userScrolling()) return // 두쪽 준비 중 코드 스크롤만 무시(손가락 스크롤은 처리)
         if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
             if (dyAcc > 40) setFull(true) else if (userScrolling() && (dyAcc < -60 || y < 20)) setFull(false)
