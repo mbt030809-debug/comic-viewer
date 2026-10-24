@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private var gap get() = prefs.getInt("gap", 8); set(v) = prefs.edit().putInt("gap", v).apply()
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
+    private var tapNav get() = prefs.getBoolean("tapNav", true); set(v) = prefs.edit().putBoolean("tapNav", v).apply()
     private var autoFull get() = prefs.getBoolean("autoFull", true); set(v) = prefs.edit().putBoolean("autoFull", v).apply()
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
@@ -108,7 +109,16 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
+        // 화면 위 1/3 탭 = 이전, 아래 1/3 탭 = 다음 (스크롤/드래그 제스처는 제외)
+        val tapDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (tapNav && web.height > 0) {
+                    if (e.y < web.height / 3f) pageScroll(-1) else if (e.y > web.height * 2f / 3f) pageScroll(1)
+                }
+                return false
+            }
+        })
+        web.setOnTouchListener { _, e -> tapDetector.onTouchEvent(e); if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
         web.setOnScrollChangeListener { _, _, y, _, oy -> onScrolled(y, y - oy) }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
@@ -120,8 +130,6 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.menuBtn).setOnClickListener { setFull(topBar.visibility == View.VISIBLE) }
         twoBtn.setOnClickListener { applyTwo(!two) }
         autoBtn.setOnClickListener { applyAuto(!auto) }
-        findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
-        findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         nextBtn.setOnClickListener { goNext() }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0); setFull(false) }
         updateTwoBtn(); applyBtnAlpha(); applyScale()
@@ -461,7 +469,8 @@ class MainActivity : Activity() {
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
         sw("스크롤 시 전체화면 (아래=숨김 / 위=표시)", autoFull) { autoFull = it }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
-        head("[▲▼ 버튼 / 볼륨키]")
+        head("[화면 터치 / 볼륨키 이동]")
+        sw("화면 위 1/3 터치=이전, 아래 1/3 터치=다음", tapNav) { tapNav = it }
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }

@@ -33,8 +33,6 @@
         <Button android:id="@+id/twoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="두쪽" />
         <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="자동" />
         <Button android:id="@+id/topBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="⤒" />
-        <Button android:id="@+id/upBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▲" />
-        <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▼" />
     </LinearLayout>
 
     <FrameLayout android:id="@+id/scrollTrack" android:layout_width="32dp" android:layout_height="match_parent"
