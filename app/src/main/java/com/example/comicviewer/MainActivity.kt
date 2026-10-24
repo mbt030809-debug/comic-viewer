@@ -112,7 +112,13 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
+        web.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { touching = true; if (auto) applyAuto(false) }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { touching = false; touchEndAt = System.currentTimeMillis() }
+            }
+            false
+        }
         web.setOnScrollChangeListener { _, _, y, _, oy -> onScrolled(y, y - oy) }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
@@ -172,7 +178,7 @@ class MainActivity : Activity() {
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     // ---- 플로팅 버튼: 꾹 눌러 이동, 위치 저장 ----
-    private fun floatBtns(): List<View> = listOf(R.id.downBtn).map { findViewById<View>(it) }
+    private fun floatBtns(): List<View> = listOf(R.id.autoBtn, R.id.downBtn).map { findViewById<View>(it) }
 
     private fun applyBtnSize() {
         val px = (btnSize * density).toInt()
@@ -265,6 +271,10 @@ class MainActivity : Activity() {
     private var full = false
     private var fullLockUntil = 0L
     private var dyAcc = 0
+    private var touching = false
+    private var touchEndAt = 0L
+    /** 손가락 스크롤(드래그/플링 관성 포함)인지 — 레이아웃 변화·코드 스크롤로 인한 가짜 '위로 스크롤'을 걸러냄 */
+    private fun userScrolling() = touching || System.currentTimeMillis() - touchEndAt < 1500
     private fun setFull(v: Boolean) {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
@@ -331,7 +341,7 @@ class MainActivity : Activity() {
         if (System.currentTimeMillis() < quietUntil) return
         if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
-            if (dyAcc > 40) setFull(true) else if (dyAcc < -40 || y < 20) setFull(false)
+            if (dyAcc > 40) setFull(true) else if (userScrolling() && (dyAcc < -60 || y < 20)) setFull(false)
         }
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
@@ -395,7 +405,7 @@ class MainActivity : Activity() {
 
     private fun applyAuto(v: Boolean) {
         if (auto == v) return
-        auto = v; autoBtn.text = if (v) "정지" else "자동"
+        auto = v; autoBtn.text = if (v) "stop" else "auto"
         if (v) {
             pageAnim?.cancel()
             if (autoPageMode) handler.post(pageAutoRun)

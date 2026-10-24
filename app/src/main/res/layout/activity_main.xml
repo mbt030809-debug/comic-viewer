@@ -35,7 +35,6 @@
             android:orientation="horizontal">
             <Button android:id="@+id/twoBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="두쪽" />
-            <Button android:id="@+id/autoBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="자동" />
             <Button android:id="@+id/topBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="맨위로" />
@@ -49,7 +48,12 @@
     <!-- 플로팅 버튼: 꾹 눌러 드래그하면 위치 변경(저장) -->
     <FrameLayout android:id="@+id/btnLayer" android:layout_width="match_parent" android:layout_height="match_parent"
         android:clipChildren="false">
-        <!-- 배경 없는 픽토그램만 표시(터치 영역은 유지) -->
+        <!-- 배경 없는 글자/픽토그램만 표시(터치 영역은 유지) -->
+        <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp"
+            android:background="@android:color/transparent" android:text="auto" android:textSize="16sp"
+            android:textAllCaps="false" android:textStyle="bold"
+            android:textColor="#FFFFFFFF" android:shadowColor="#FF000000" android:shadowRadius="6"
+            android:shadowDx="0" android:shadowDy="0" android:stateListAnimator="@null" />
         <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp"
             android:background="@android:color/transparent" android:text="▼" android:textSize="30sp"
             android:textColor="#FFFFFFFF" android:shadowColor="#FF000000" android:shadowRadius="6"
