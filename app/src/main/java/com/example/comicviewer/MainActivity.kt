@@ -30,6 +30,8 @@ class MainActivity : Activity() {
     private lateinit var autoBtn: Button
     private lateinit var twoBtn: Button
     private lateinit var nextBtn: Button
+    private lateinit var track: View
+    private lateinit var thumb: View
     private val handler = Handler(Looper.getMainLooper())
     private val density get() = resources.displayMetrics.density
     private val expanded get() = resources.configuration.screenWidthDp >= 600 // 폴드 펼침(태블릿 폭)
@@ -70,6 +72,7 @@ class MainActivity : Activity() {
         topBar = findViewById(R.id.topBar); autoBtn = findViewById(R.id.autoBtn); twoBtn = findViewById(R.id.twoBtn)
         nextBtn = findViewById(R.id.nextBtn)
         applyKeepOn()
+        initScrollBar()
 
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
@@ -194,8 +197,39 @@ class MainActivity : Activity() {
     private fun atBottom() = web.contentHeight > 0 && web.scrollY > 0 &&
         web.scrollY + web.height >= web.contentHeight * density - 80
 
+    // ---- 스크롤바: 오른쪽 가장자리를 터치/드래그해 원하는 위치로 이동 ----
+    @SuppressLint("ClickableViewAccessibility")
+    private fun initScrollBar() {
+        track = findViewById(R.id.scrollTrack); thumb = findViewById(R.id.scrollThumb)
+        thumb.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 12 * density; setColor(0xCCFFFFFF.toInt()) }
+        track.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    if (e.action == MotionEvent.ACTION_DOWN) { applyAuto(false); pageAnim?.cancel() }
+                    track.parent.requestDisallowInterceptTouchEvent(true)
+                    val range = web.contentHeight * density - web.height
+                    val avail = (track.height - thumb.height).coerceAtLeast(1)
+                    val r = ((e.y - thumb.height / 2f) / avail).coerceIn(0f, 1f)
+                    if (range > 0) web.scrollTo(0, (r * range).toInt())
+                    updateThumb(); true
+                }
+                else -> true
+            }
+        }
+        val tick = object : Runnable { override fun run() { updateThumb(); track.postDelayed(this, 1000) } }
+        track.postDelayed(tick, 1000)
+    }
+    private fun updateThumb() {
+        val range = web.contentHeight * density - web.height
+        if (range <= 0) { thumb.visibility = View.GONE; return }
+        thumb.visibility = View.VISIBLE
+        val avail = (track.height - thumb.height).coerceAtLeast(0)
+        thumb.translationY = (web.scrollY / range).coerceIn(0f, 1f) * avail
+    }
+
     private val saveRun = Runnable { savePosNow() }
     private fun onScrolled(y: Int, dy: Int) {
+        updateThumb()
         if (autoFull && System.currentTimeMillis() > fullLockUntil) {
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
             if (dyAcc > 40) setFull(true) else if (dyAcc < -40 || y < 20) setFull(false)
