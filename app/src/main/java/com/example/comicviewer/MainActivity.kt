@@ -43,6 +43,8 @@ class MainActivity : Activity() {
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
     private var tapNav get() = prefs.getBoolean("tapNav", true); set(v) = prefs.edit().putBoolean("tapNav", v).apply()
+    private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
+    private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
     private var autoFull get() = prefs.getBoolean("autoFull", true); set(v) = prefs.edit().putBoolean("autoFull", v).apply()
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
@@ -292,11 +294,31 @@ class MainActivity : Activity() {
         }
     }
 
+    /** 자동 방식2: 1페이지 이동 → 설정한 시간 대기 → 반복 */
+    private val pageAutoRun = object : Runnable {
+        override fun run() {
+            if (!auto) return
+            if (atBottom()) {
+                applyAuto(false)
+                if (autoNext) { resumeAuto = true; goNext() }
+                return
+            }
+            pageScroll(1)
+            handler.postDelayed(this, autoWait * 100L + smoothMs)
+        }
+    }
+
     private fun applyAuto(v: Boolean) {
         if (auto == v) return
         auto = v; autoBtn.text = if (v) "정지" else "자동"
-        if (v) { pageAnim?.cancel(); frame.last = 0L; frame.acc = 0f; Choreographer.getInstance().postFrameCallback(frame) }
-        else Choreographer.getInstance().removeFrameCallback(frame)
+        if (v) {
+            pageAnim?.cancel()
+            if (autoPageMode) handler.post(pageAutoRun)
+            else { frame.last = 0L; frame.acc = 0f; Choreographer.getInstance().postFrameCallback(frame) }
+        } else {
+            Choreographer.getInstance().removeFrameCallback(frame)
+            handler.removeCallbacks(pageAutoRun)
+        }
     }
 
     // ================= 웹툰 기록 / 이어보기 =================
@@ -475,7 +497,9 @@ class MainActivity : Activity() {
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
         head("[자동 버튼: 계속 흐르는 스크롤]")
-        bar("자동 스크롤 속도 ", 20, 600, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
+        sw("자동 방식2: 1페이지 이동 후 대기를 반복 (끄면 연속 스크롤)", autoPageMode) { autoPageMode = it }
+        bar("[방식1: 연속] 속도 ", 20, 2000, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
+        bar("[방식2] 1페이지 이동 후 대기 ", 5, 600, autoWait, { "${it / 10}.${it % 10}초" }) { autoWait = it }
         sw("끝에 도달하면 다음화로 자동 이동", autoNext) { autoNext = it }
         box.addView(Button(this).apply {
             text = "두쪽 보기 진단 (문제 시 결과를 알려주세요)"
