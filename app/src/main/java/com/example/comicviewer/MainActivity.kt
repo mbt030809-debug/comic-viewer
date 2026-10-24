@@ -118,7 +118,8 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         nextBtn.setOnClickListener { goNext() }
-        updateTwoBtn(); applyBtnAlpha()
+        findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0); setFull(false) }
+        updateTwoBtn(); applyBtnAlpha(); applyScale()
         if (foldAutoTwo && expanded) { two = true; updateTwoBtn() }
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
@@ -128,7 +129,7 @@ class MainActivity : Activity() {
     override fun onConfigurationChanged(c: Configuration) {
         super.onConfigurationChanged(c)
         if (foldAutoTwo) { val was = two; two = expanded; updateTwoBtn(); if (was && !two) { web.reload(); return } }
-        injectScript()
+        applyScale(); injectScript()
     }
 
     override fun onDestroy() { applyAuto(false); web.destroy(); super.onDestroy() }
@@ -151,6 +152,12 @@ class MainActivity : Activity() {
         if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
+    /** 이미지 너비: 웹뷰 좌우에 검정 여백을 주어 페이지를 좁게(작게) 표시 */
+    private fun applyScale() {
+        val m = (resources.displayMetrics.widthPixels * (100 - imgScale) / 200f).toInt()
+        val lp = web.layoutParams as FrameLayout.LayoutParams
+        if (lp.leftMargin != m || lp.rightMargin != m) { lp.leftMargin = m; lp.rightMargin = m; web.layoutParams = lp }
+    }
     private fun applyBtnAlpha() { findViewById<View>(R.id.btnBox).alpha = btnAlpha / 100f }
     private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
     private fun applyTwo(v: Boolean) {
@@ -159,8 +166,7 @@ class MainActivity : Activity() {
     }
     private fun injectScript() {
         web.evaluateJavascript(
-            SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__GAP__", "$gap")
-                .replace("__SCALE__", "$imgScale"), null
+            SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__GAP__", "$gap"), null
         )
     }
 
@@ -409,7 +415,7 @@ class MainActivity : Activity() {
         sw("두쪽 보기", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
         sw("오른쪽→왼쪽 (오른쪽이 윗부분)", rtl) { rtl = it; needInject = true }
         bar("두쪽 중간 여백 ", 0, 60, gap, { "${it}px" }) { gap = it; needInject = true }
-        bar("이미지 너비 [현재 화면: ${if (expanded) "펼침" else "접힘"}] ", 30, 100, imgScale, { "$it%" }) { imgScale = it; needInject = true }
+        bar("이미지 너비 [현재 화면: ${if (expanded) "펼침" else "접힘"}] ", 30, 100, imgScale, { "$it%" }) { imgScale = it; applyScale() }
         sw("펼침 화면에서 자동으로 두쪽 보기 (접으면 해제)", foldAutoTwo) { foldAutoTwo = it }
         head("[화면]")
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
@@ -444,20 +450,28 @@ class MainActivity : Activity() {
         // 두쪽 보기: 연속 세로 스트립을 좌/우 두 패널로 표시(왼쪽=현재 위치, 오른쪽=한 화면 아래).
         // 문서 스크롤(native)에 맞춰 두 스트립을 translate. 광고 제외 규칙은 사이트(localStorage)별 저장.
         private const val SCRIPT = """(function(){
-var o=window.__cvOpts={two:__TWO__,rtl:__RTL__,gap:__GAP__,scale:__SCALE__};
+var o=window.__cvOpts={two:__TWO__,rtl:__RTL__,gap:__GAP__};
 if(window.__cvTimer){window.__cvTick();return}
-var cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
+var diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];return r}catch(e){return {urls:[],idx:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
 function big(i){var w=i.naturalWidth,h=i.naturalHeight;
- if(!w||!h||w<400||h<300||w/h>3)return false;
+ if(!w||!h||w<350||h<250||w/h>3)return false;
  var r=i.getBoundingClientRect();
  return r.width==0||r.width>=window.innerWidth*0.4;}
+function lazySrc(i){var n=['data-src','data-original','data-lazy-src','data-lazy','data-url','data-origin','data-echo','lazy-src','data-actualsrc'];
+ for(var k=0;k<n.length;k++){var v=i.getAttribute(n[k]);if(v&&/^(https?:)?\/\/|^\/|\.(jpe?g|png|webp|gif)/i.test(v))return v}
+ return null}
+var swept=0;
+function sweep(){swept=1;var st=box('cv-diag','bottom:0;background:#c00');st.textContent='두쪽 보기: 이미지 불러오는 중...';
+ var y=0,n=0;(function step(){var H=window.innerHeight;window.scrollTo(0,y);y+=H*0.8;n++;
+  if(y<document.documentElement.scrollHeight&&n<80)setTimeout(step,200);
+  else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},1200)})();}
 function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
 function build(){
  var st=mk('style','cv-style');
- st.textContent='body>*:not(#cv-root):not(#cv-spacer):not(.cv-keep){display:none!important}html,body{margin:0!important;padding:0!important;background:#111!important}#cv-root{position:fixed;top:0;height:100vh;z-index:2147483000;display:flex;background:#111;overflow:hidden}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
+ st.textContent='body>*:not(#cv-root):not(#cv-spacer):not(.cv-keep){display:none!important}html,body{margin:0!important;padding:0!important;background:#111!important;overflow:visible!important;height:auto!important;position:static!important;transform:none!important}#cv-root{position:fixed;top:0;height:100vh;z-index:2147483000;display:flex;background:#111;overflow:hidden}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
  document.head.appendChild(st);
  root=mk('div','cv-root');root.style.pointerEvents=exMode?'auto':'none';
  for(var k=0;k<2;k++){var p=mk('div',null,'cv-pane'),s=mk('div',null,'cv-strip');p.appendChild(s);root.appendChild(p);strips.push(s);}
@@ -471,7 +485,7 @@ function add(i){var src=i.currentSrc||i.src;
 function upd(){if(!root)return;
  var H=window.innerHeight,y=window.scrollY;
  root.style.flexDirection=o.rtl?'row-reverse':'row';root.style.gap=o.gap+'px';
- root.style.width=o.scale+'%';root.style.left=((100-o.scale)/2)+'%';
+ root.style.width='100%';root.style.left='0';
  strips[0].style.transform='translate3d(0,'+(-y)+'px,0)';
  strips[1].style.transform='translate3d(0,'+(-(y+H))+'px,0)';
  spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';}
@@ -481,7 +495,7 @@ function tick(){
  var imgs=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
  imgs.forEach(function(i){
   if(i.__cvi===undefined)i.__cvi=cnt++;
-  var d=i.getAttribute('data-src')||i.getAttribute('data-original')||i.getAttribute('data-lazy-src');
+  var d=lazySrc(i);
   if(d&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&&(o.two||i.getBoundingClientRect().top<window.innerHeight*3)){
    i.__cvl=1;i.loading='eager';i.src=d;}
   else if(o.two&&i.loading=='lazy')i.loading='eager';
@@ -493,12 +507,14 @@ function tick(){
   if(o.two)return;
   if(ex){i.style.display='none';i.__cvhid=1;return}
   if(i.__cvhid){i.style.display='';i.__cvhid=0}
-  if(o.scale<100||i.__cvs){i.__cvs=1;var st=i.style;st.width=o.scale+'%';st.height='auto';st.maxWidth='none';st.display='block';st.marginLeft='auto';st.marginRight='auto';}
  });
  if(!o.two)return;
- if(!root)build();
+ if(!root){if(swept==0){sweep();return}if(swept==1)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
- upd();}
+ upd();
+ if(!window.__cvDiag&&++diag>8&&!strips[0].children.length){window.__cvDiag=1;
+  var d=box('cv-diag','bottom:0;background:#c00');d.textContent='두쪽 보기: 큰 이미지를 찾지 못했습니다 (페이지 이미지 '+imgs.length+'개)';
+  setTimeout(function(){d.remove()},6000);}}
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
