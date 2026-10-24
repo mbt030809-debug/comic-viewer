@@ -112,7 +112,7 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN) { if (auto) applyAuto(false); setFull(true) }; false }
+        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
         web.setOnScrollChangeListener { _, _, y, _, oy -> onScrolled(y, y - oy) }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
@@ -121,12 +121,10 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.bookmarkBtn).setOnClickListener { showBookmarks() }
         findViewById<View>(R.id.historyBtn).setOnClickListener { showHistory() }
         findViewById<View>(R.id.settingsBtn).setOnClickListener { showSettings() }
-        findViewById<View>(R.id.menuBtn).setOnClickListener { setFull(topBar.visibility == View.VISIBLE) }
         twoBtn.setOnClickListener { applyTwo(!two) }
         autoBtn.setOnClickListener { applyAuto(!auto) }
         nextBtn.setOnClickListener { goNext() }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
-        findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
         updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons()
         if (foldAutoTwo) { two = expanded; updateTwoBtn() }
@@ -134,8 +132,6 @@ class MainActivity : Activity() {
             val w = r - l
             if (w > 0 && w != orr - ol) { val first = rootW == 0; rootW = w; if (!first) onWidthChanged() else { applyScale(); if (foldAutoTwo && two != expanded) { two = expanded; updateTwoBtn() } } }
         }
-
-        window.decorView.post { setFull(true) } // 기본: 메뉴 숨김
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
@@ -176,7 +172,7 @@ class MainActivity : Activity() {
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     // ---- 플로팅 버튼: 꾹 눌러 이동, 위치 저장 ----
-    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.autoBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
+    private fun floatBtns(): List<View> = listOf(R.id.downBtn).map { findViewById<View>(it) }
 
     private fun applyBtnSize() {
         val px = (btnSize * density).toInt()
@@ -333,7 +329,10 @@ class MainActivity : Activity() {
     private fun onScrolled(y: Int, dy: Int) {
         updateThumb()
         if (System.currentTimeMillis() < quietUntil) return
-        if (abs(dy) >= 2 && System.currentTimeMillis() > fullLockUntil) setFull(true) // 스크롤하면 메뉴 숨김 (표시는 '메뉴' 버튼으로만)
+        if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
+            dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
+            if (dyAcc > 40) setFull(true) else if (dyAcc < -40 || y < 20) setFull(false)
+        }
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
             if (b && auto && autoNext) { applyAuto(false); resumeAuto = true; handler.postDelayed({ goNext() }, 1200) } }
@@ -350,7 +349,7 @@ class MainActivity : Activity() {
 
     // ---- 스크롤 ----
     private fun pageScroll(dir: Int) {
-        setFull(true)
+        setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         pageAnim?.cancel()
@@ -531,12 +530,15 @@ class MainActivity : Activity() {
             .setAdapter(ad) { _, i -> go(list[i].second) }
             .setPositiveButton("현재 페이지 추가") { _, _ ->
                 val u = web.url ?: return@setPositiveButton
-                if (list.none { it.second == u }) {
-                    val t = web.title?.takeIf { it.isNotBlank() } ?: u
-                    val label = parseTitle(t)?.let { (n, e) -> "$n ${e}화" } ?: t // 예: "웹툰명 12화"
-                    list.add(label to u); saveBookmarks(list)
-                    Toast.makeText(this, "북마크 추가", Toast.LENGTH_SHORT).show()
-                } else Toast.makeText(this, "이미 있음", Toast.LENGTH_SHORT).show()
+                val t = web.title?.takeIf { it.isNotBlank() } ?: u
+                val parsed = parseTitle(t)
+                val label = parsed?.let { (n, e) -> "$n ${e}화" } ?: t // 예: "웹툰명 12화"
+                // 같은 웹툰(이름 동일)이면 덮어쓰기. 주소가 바뀌어도 이름으로 식별
+                val key = parsed?.let { norm(it.first) }
+                val idx = list.indexOfFirst { b -> b.second == u || (key != null && parseTitle(b.first)?.let { norm(it.first) } == key) }
+                if (idx >= 0) { list[idx] = label to u; Toast.makeText(this, "북마크 덮어쓰기: $label", Toast.LENGTH_SHORT).show() }
+                else { list.add(label to u); Toast.makeText(this, "북마크 추가: $label", Toast.LENGTH_SHORT).show() }
+                saveBookmarks(list)
             }
             .setNegativeButton("닫기", null).create()
         dlg.show()
