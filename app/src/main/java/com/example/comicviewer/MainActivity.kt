@@ -44,7 +44,6 @@ class MainActivity : Activity() {
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
     private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
-    private var autoFull get() = prefs.getBoolean("autoFull", true); set(v) = prefs.edit().putBoolean("autoFull", v).apply()
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
@@ -111,7 +110,7 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
+        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN) { if (auto) applyAuto(false); setFull(true) }; false }
         web.setOnScrollChangeListener { _, _, y, _, oy -> onScrolled(y, y - oy) }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
@@ -126,9 +125,11 @@ class MainActivity : Activity() {
         nextBtn.setOnClickListener { goNext() }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
-        findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0); setFull(false) }
+        findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
         updateTwoBtn(); applyBtnAlpha(); applyScale(); initDraggableButtons()
         if (foldAutoTwo && expanded) { two = true; updateTwoBtn() }
+
+        window.decorView.post { setFull(true) } // 기본: 메뉴 숨김
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
@@ -161,7 +162,7 @@ class MainActivity : Activity() {
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     // ---- 플로팅 버튼: 꾹 눌러 이동, 위치 저장 ----
-    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.twoBtn, R.id.autoBtn, R.id.topBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
+    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
 
     private fun placeBtns() {
         val layer = findViewById<View>(R.id.btnLayer)
@@ -301,10 +302,7 @@ class MainActivity : Activity() {
     private fun onScrolled(y: Int, dy: Int) {
         updateThumb()
         if (System.currentTimeMillis() < quietUntil) return
-        if (autoFull && System.currentTimeMillis() > fullLockUntil) {
-            dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
-            if (dyAcc > 40) setFull(true) else if (dyAcc < -40 || y < 20) setFull(false)
-        }
+        if (abs(dy) >= 2 && System.currentTimeMillis() > fullLockUntil) setFull(true) // 스크롤하면 메뉴 숨김 (표시는 '메뉴' 버튼으로만)
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
             if (b && auto && autoNext) { applyAuto(false); resumeAuto = true; handler.postDelayed({ goNext() }, 1200) } }
@@ -321,8 +319,8 @@ class MainActivity : Activity() {
 
     // ---- 스크롤 ----
     private fun pageScroll(dir: Int) {
-        if (dir > 0) { if (autoFull) setFull(true); if (autoNext && atBottom()) { goNext(); return } }
-        else if (autoFull) setFull(false)
+        setFull(true)
+        if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
@@ -546,7 +544,6 @@ class MainActivity : Activity() {
         sw("펼침 화면에서 자동으로 두쪽 보기 (접으면 해제)", foldAutoTwo) { foldAutoTwo = it }
         head("[화면]")
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
-        sw("스크롤 시 전체화면 (아래=숨김 / 위=표시)", autoFull) { autoFull = it }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
@@ -584,7 +581,7 @@ class MainActivity : Activity() {
             text = "광고 제거 모드 시작 (박스 크기 조절)"
             setOnClickListener {
                 (tag as? AlertDialog)?.dismiss()
-                injectScript(); setFull(false)
+                injectScript(); setFull(true)
                 web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
             }
         })

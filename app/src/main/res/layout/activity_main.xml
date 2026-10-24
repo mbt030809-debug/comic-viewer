@@ -26,6 +26,15 @@
             <Button android:id="@+id/settingsBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="설정" />
         </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/twoBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="두쪽" />
+            <Button android:id="@+id/autoBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="자동" />
+            <Button android:id="@+id/topBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="맨위로" />
+        </LinearLayout>
     </LinearLayout>
 
     <Button android:id="@+id/nextBtn" android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -35,10 +44,7 @@
     <!-- 플로팅 버튼: 꾹 눌러 드래그하면 위치 변경(저장) -->
     <FrameLayout android:id="@+id/btnLayer" android:layout_width="match_parent" android:layout_height="match_parent"
         android:clipChildren="false">
-        <Button android:id="@+id/menuBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="☰" />
-        <Button android:id="@+id/twoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="두쪽" />
-        <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="자동" />
-        <Button android:id="@+id/topBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="⤒" />
+        <Button android:id="@+id/menuBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="메뉴" />
         <Button android:id="@+id/upBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▲" />
         <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▼" />
     </FrameLayout>
