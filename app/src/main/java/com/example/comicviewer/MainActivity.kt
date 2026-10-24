@@ -50,6 +50,7 @@ class MainActivity : Activity() {
     private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply()
     private var pageRatio2 get() = prefs.getInt("ratio2", 100); set(v) = prefs.edit().putInt("ratio2", v).apply() // 두쪽 보기 1회 이동 거리(%)
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
+    private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -126,7 +127,7 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
-        updateTwoBtn(); applyBtnAlpha(); applyScale(); initDraggableButtons()
+        updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons()
         if (foldAutoTwo && expanded) { two = true; updateTwoBtn() }
 
         window.decorView.post { setFull(true) } // 기본: 메뉴 숨김
@@ -162,20 +163,26 @@ class MainActivity : Activity() {
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     // ---- 플로팅 버튼: 꾹 눌러 이동, 위치 저장 ----
-    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
+    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.autoBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
+
+    private fun applyBtnSize() {
+        val px = (btnSize * density).toInt()
+        floatBtns().forEach { v -> val lp = v.layoutParams; if (lp.width != px || lp.height != px) { lp.width = px; lp.height = px; v.layoutParams = lp } }
+        findViewById<View>(R.id.btnLayer).post { placeBtns() }
+    }
 
     private fun placeBtns() {
         val layer = findViewById<View>(R.id.btnLayer)
         val w = layer.width.toFloat(); val h = layer.height.toFloat()
         if (w <= 0f) return
-        val size = 52 * density
+        val size = btnSize * density
         val startY = (h - floatBtns().size * (size + 2 * density)) / 2f
         floatBtns().forEachIndexed { i, v ->
             val k = resources.getResourceEntryName(v.id)
             val fx = prefs.getFloat("bx_$k", -1f); val fy = prefs.getFloat("by_$k", -1f)
             val x = if (fx >= 0f) fx * w else w - size - 40 * density
             val y = if (fy >= 0f) fy * h else startY + i * (size + 2 * density)
-            v.x = x.coerceIn(0f, w - size); v.y = y.coerceIn(0f, h - size)
+            v.x = x.coerceIn(0f, (w - size).coerceAtLeast(0f)); v.y = y.coerceIn(0f, (h - size).coerceAtLeast(0f))
         }
     }
 
@@ -273,18 +280,28 @@ class MainActivity : Activity() {
     private fun initScrollBar() {
         track = findViewById(R.id.scrollTrack); thumb = findViewById(R.id.scrollThumb)
         thumb.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 12 * density; setColor(0xCCFFFFFF.toInt()) }
+        var grab = 0f; var dragging = false
         track.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    if (e.action == MotionEvent.ACTION_DOWN) { applyAuto(false); pageAnim?.cancel() }
-                    track.parent.requestDisallowInterceptTouchEvent(true)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 손잡이를 직접 잡았을 때만 드래그 시작 (트랙의 다른 곳 터치는 무시)
+                    val top = thumb.translationY
+                    if (thumb.visibility == View.VISIBLE && e.y >= top - 8 * density && e.y <= top + thumb.height + 8 * density) {
+                        dragging = true; grab = e.y - top
+                        applyAuto(false); pageAnim?.cancel()
+                        track.parent.requestDisallowInterceptTouchEvent(true)
+                        true
+                    } else false
+                }
+                MotionEvent.ACTION_MOVE -> if (dragging) {
                     val range = web.contentHeight * density - web.height
                     val avail = (track.height - thumb.height).coerceAtLeast(1)
-                    val r = ((e.y - thumb.height / 2f) / avail).coerceIn(0f, 1f)
+                    val r = ((e.y - grab) / avail).coerceIn(0f, 1f)
                     if (range > 0) web.scrollTo(0, (r * range).toInt())
                     updateThumb(); true
-                }
-                else -> true
+                } else false
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { val was = dragging; dragging = false; was }
+                else -> dragging
             }
         }
         val tick = object : Runnable { override fun run() { updateThumb(); checkTitle(); track.postDelayed(this, 1000) } }
@@ -544,6 +561,7 @@ class MainActivity : Activity() {
         sw("펼침 화면에서 자동으로 두쪽 보기 (접으면 해제)", foldAutoTwo) { foldAutoTwo = it }
         head("[화면]")
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
+        bar("우측 버튼 크기 ", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }

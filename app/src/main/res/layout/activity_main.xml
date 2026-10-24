@@ -9,29 +9,28 @@
     <LinearLayout android:id="@+id/topBar" android:layout_width="match_parent"
         android:layout_height="wrap_content" android:orientation="vertical"
         android:layout_gravity="top" android:background="#DD111111">
-        <EditText android:id="@+id/urlInput" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="웹 주소 입력" android:inputType="textUri"
-            android:imeOptions="actionGo" android:singleLine="true" android:textColor="#FFFFFF"
-            android:textColorHint="#888888" android:paddingStart="12dp" android:paddingEnd="12dp" />
+        <!-- 1행: 뒤로 / 주소 / 이동 -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal">
-            <Button android:id="@+id/backBtn" android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="◀" />
-            <Button android:id="@+id/goBtn" android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="이동" />
+            <Button android:id="@+id/backBtn" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:minWidth="0dp" android:text="◀" />
+            <EditText android:id="@+id/urlInput" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:hint="웹 주소 입력" android:inputType="textUri"
+                android:imeOptions="actionGo" android:singleLine="true" android:textColor="#FFFFFF"
+                android:textColorHint="#888888" android:paddingStart="8dp" android:paddingEnd="8dp" />
+            <Button android:id="@+id/goBtn" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:minWidth="0dp" android:text="이동" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
             <Button android:id="@+id/bookmarkBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="★" />
             <Button android:id="@+id/historyBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="기록" />
             <Button android:id="@+id/settingsBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="설정" />
-        </LinearLayout>
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal">
             <Button android:id="@+id/twoBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="두쪽" />
-            <Button android:id="@+id/autoBtn" android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="자동" />
             <Button android:id="@+id/topBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="맨위로" />
         </LinearLayout>
@@ -45,6 +44,7 @@
     <FrameLayout android:id="@+id/btnLayer" android:layout_width="match_parent" android:layout_height="match_parent"
         android:clipChildren="false">
         <Button android:id="@+id/menuBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="메뉴" />
+        <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="자동" />
         <Button android:id="@+id/upBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▲" />
         <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▼" />
     </FrameLayout>
