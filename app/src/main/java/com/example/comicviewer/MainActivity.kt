@@ -480,7 +480,7 @@ class MainActivity : Activity() {
         head("[광고]")
         sw("광고 도메인 차단", adblock) { adblock = it }
         box.addView(Button(this).apply {
-            text = "광고 이미지 제외 모드 시작"
+            text = "광고 제거 모드 시작 (박스 크기 조절)"
             setOnClickListener {
                 (tag as? AlertDialog)?.dismiss()
                 injectScript(); setFull(false)
@@ -502,9 +502,9 @@ class MainActivity : Activity() {
         private const val SCRIPT = """(function(){
 var o=window.__cvOpts=window.__cvOpts||{};o.two=__TWO__;o.rtl=__RTL__;o.gap=__GAP__;
 if(window.__cvTimer){window.__cvTick();return}
-var anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
+var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
 function key(u){return (u||'').split('?')[0]}
-function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];return r}catch(e){return {urls:[],idx:[]}}}
+function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];r.sels=r.sels||[];return r}catch(e){return {urls:[],idx:[],sels:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
 function big(i){var w=i.naturalWidth,h=i.naturalHeight;
  if(!w||!h||w<350||h<100||w/h>8)return false;
@@ -564,6 +564,8 @@ function tick0(){
   else if(o.two&&i.loading=='lazy')i.loading='eager';
  });
  var r=rules();
+ if(!o.two){imgs.forEach(function(i){if(r.urls.indexOf(key(i.currentSrc||i.src))>=0){i.style.display='none';i.__cvhid=1}});
+  r.sels.forEach(function(sl){try{[].forEach.call(document.querySelectorAll(sl),function(e){e.style.display='none'})}catch(x){}})}
  var bigs=imgs.filter(big).sort(function(a,b){return a.__cvi-b.__cvi});
  bigs.forEach(function(i,k){i.__cvk=k;
   var ex=r.urls.indexOf(key(i.currentSrc||i.src))>=0||r.idx.indexOf(k)>=0;i.__cvx=ex;
@@ -593,32 +595,58 @@ window.__cvNext=function(click){
    if(t.length>0&&t.length<=14&&re.test(t)){c=a;break}}}
  if(!c)return '';
  if(click)c.click();return c.href||'1';};
-// ---- 광고 제외 모드 ----
-function btn(t,f){var b=mk('button');b.textContent=t;b.style.cssText='margin:4px;padding:10px 12px;font-size:15px';b.onclick=function(ev){ev.stopPropagation();f()};return b}
+// ---- 광고 제거 모드: 크기 조절 가능한 박스를 광고에 맞춰 [제거] ----
+function btn(t,f){var b=mk('button');b.textContent=t;b.style.cssText='margin:3px;padding:9px 10px;font-size:14px';b.onclick=function(ev){ev.stopPropagation();f()};return b}
 function box(id,css){var d=mk('div',id,'cv-keep');d.style.cssText='position:fixed;left:0;right:0;z-index:2147483647;color:#fff;font:14px sans-serif;text-align:center;padding:8px;'+css;document.body.appendChild(d);return d}
-function closeMenu(){if(menu){menu.remove();menu=null}}
-function showMenu(i){closeMenu();var k=i.__cvk,src=key(i.__cvsrc||i.currentSrc||i.src);
- menu=box('cv-menu','bottom:0;background:#222;border-top:2px solid #c00');
- menu.appendChild(document.createTextNode((k+1)+'번째 이미지'));menu.appendChild(mk('br'));
- menu.appendChild(btn('이 이미지 제외 (같은 주소)',function(){var r=rules();r.urls.push(src);saveRules(r);closeMenu();rebuild()}));
- menu.appendChild(btn((k+1)+'번째 위치 제외 (이 사이트 모든 화)',function(){var r=rules();r.idx.push(k);saveRules(r);closeMenu();rebuild()}));
- menu.appendChild(btn('취소',closeMenu));}
-window.__cvEx=function(on){exMode=on;closeMenu();if(bar){bar.remove();bar=null}
- if(root)root.style.pointerEvents=on?'auto':'none';
- if(on){bar=box('cv-ui','top:0;background:#c00');
-  bar.appendChild(document.createTextNode('광고 제외 모드: 제외할 이미지를 탭하세요'));
+function ovl(a,b){var w=Math.min(a.right,b.right)-Math.max(a.left,b.left),h=Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top);return(w>0&&h>0)?w*h:0}
+function setRect(l,t,w,h){var W=window.innerWidth,H=window.innerHeight;w=Math.max(40,Math.min(w,W));h=Math.max(40,Math.min(h,H));
+ l=Math.max(0,Math.min(l,W-w));t=Math.max(0,Math.min(t,H-h));
+ bx.style.left=l+'px';bx.style.top=t+'px';bx.style.width=w+'px';bx.style.height=h+'px';}
+function drag(el,fn){el.addEventListener('pointerdown',function(e){e.stopPropagation();e.preventDefault();el.setPointerCapture(e.pointerId);
+ var sx=e.clientX,sy=e.clientY,r=bx.getBoundingClientRect();
+ function mv(ev){fn(ev.clientX-sx,ev.clientY-sy,r)}
+ function up(){el.removeEventListener('pointermove',mv);el.removeEventListener('pointerup',up);el.removeEventListener('pointercancel',up)}
+ el.addEventListener('pointermove',mv);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up)})}
+function mkBox(){var W=window.innerWidth,H=window.innerHeight;
+ bx=mk('div','cv-box','cv-keep');
+ bx.style.cssText='position:fixed;z-index:2147483646;left:'+(W*0.1)+'px;top:'+(H*0.3)+'px;width:'+(W*0.8)+'px;height:'+(H*0.25)+'px;border:3px solid #f33;background:rgba(255,0,0,.18);touch-action:none;box-sizing:border-box';
+ document.body.appendChild(bx);
+ drag(bx,function(dx,dy,r){setRect(r.left+dx,r.top+dy,r.width,r.height)});
+ [['nw',0,0],['ne',1,0],['sw',0,1],['se',1,1]].forEach(function(c){
+  var h=mk('div',null,'cv-keep');
+  h.style.cssText='position:absolute;width:44px;height:44px;border-radius:50%;background:#f33;opacity:.9;touch-action:none;'+(c[1]?'right':'left')+':-18px;'+(c[2]?'bottom':'top')+':-18px';
+  bx.appendChild(h);
+  drag(h,function(dx,dy,r){var l=r.left,t=r.top,w=r.width,hh=r.height;
+   if(c[1])w=r.width+dx;else{l=r.left+dx;w=r.width-dx}
+   if(c[2])hh=r.height+dy;else{t=r.top+dy;hh=r.height-dy}
+   if(w<40){if(!c[1])l=r.right-40;w=40}if(hh<40){if(!c[2])t=r.bottom-40;hh=40}
+   setRect(l,t,w,hh)})});}
+function selOf(e){var s=e.id?'#'+CSS.escape(e.id):e.tagName.toLowerCase()+(e.classList.length?'.'+[].map.call(e.classList,CSS.escape).join('.'):'');return s}
+function applyBox(mode){var b=bx.getBoundingClientRect(),r=rules(),hits=[],seen={};
+ [].slice.call(document.images).forEach(function(i){var o2=i;
+  if(i.closest('#cv-root')){o2=null;[].forEach.call(document.images,function(x){if(x.__cvi===i.__cvi&&!x.closest('#cv-root'))o2=x});if(o2)o2.__cvsrc=i.__cvsrc}
+  if(!o2||o2.closest('.cv-keep'))return;
+  var q=i.getBoundingClientRect(),a=q.width*q.height;if(a<=0)return;
+  if(ovl(b,q)/a>=0.6&&hits.indexOf(o2)<0)hits.push(o2)});
+ var n=0;
+ hits.forEach(function(o2){var src=key(o2.__cvsrc||o2.currentSrc||o2.src);
+  if(mode=='pos'&&o2.__cvk!==undefined){if(r.idx.indexOf(o2.__cvk)<0)r.idx.push(o2.__cvk)}
+  else if(r.urls.indexOf(src)<0)r.urls.push(src);n++});
+ if(!n){var cx=b.left+b.width/2,cy=b.top+b.height/2,els=document.elementsFromPoint(cx,cy),e=null;
+  for(var k=0;k<els.length;k++){var x=els[k];if(x===document.documentElement||x===document.body||x.closest('.cv-keep')||x.closest('#cv-root'))continue;e=x;break}
+  if(e){while(e.parentElement&&e.parentElement!==document.body){var pr=e.parentElement.getBoundingClientRect();
+    if(pr.left>=b.left-12&&pr.right<=b.right+12&&pr.top>=b.top-12&&pr.bottom<=b.bottom+12)e=e.parentElement;else break}
+   var sl=selOf(e);if(document.querySelectorAll(sl).length<=5){r.sels=r.sels||[];if(r.sels.indexOf(sl)<0)r.sels.push(sl);e.style.display='none';n=1}}}
+ saveRules(r);rebuild();return n}
+window.__cvEx=function(on){exMode=on;if(bar){bar.remove();bar=null}if(bx){bx.remove();bx=null}
+ if(on){mkBox();bar=box('cv-ui','top:0;background:#c00');
+  var msg=document.createElement('div');msg.textContent='광고 제거: 빨간 박스를 광고에 맞춘 뒤 [제거] (스크롤은 박스 밖을 밀어서)';bar.appendChild(msg);
+  var res=document.createElement('div');
+  bar.appendChild(btn('제거 (이 화)',function(){res.textContent=applyBox('url')+'개 제거'}));
+  bar.appendChild(btn('제거 (모든 화, 같은 위치)',function(){res.textContent=applyBox('pos')+'개 제거'}));
   bar.appendChild(btn('종료',function(){window.__cvEx(false)}));
-  bar.appendChild(btn('규칙 초기화',function(){saveRules({urls:[],idx:[]});location.reload()}));}};
-document.addEventListener('click',function(e){
- if(!exMode)return;var t=e.target;if(t.closest&&t.closest('.cv-keep'))return;
- e.preventDefault();e.stopPropagation();
- var img=null;
- if(t.tagName=='IMG')img=t;else{var els=document.elementsFromPoint(e.clientX,e.clientY);for(var n=0;n<els.length;n++){if(els[n].tagName=='IMG'){img=els[n];break}}}
- if(!img)return;
- if(img.closest('#cv-root')){var cs=img.__cvi,orig=null;[].forEach.call(document.images,function(x){if(x.__cvi===cs&&!x.closest('#cv-root'))orig=x});
-  if(!orig)return;orig.__cvsrc=img.__cvsrc;img=orig}
- if(img.__cvk===undefined)return;
- showMenu(img);},true);
+  bar.appendChild(btn('규칙 초기화',function(){saveRules({urls:[],idx:[],sels:[]});location.reload()}));
+  bar.appendChild(res);}};
 window.addEventListener('scroll',upd,{passive:true});window.addEventListener('resize',upd);
 window.__cvTimer=setInterval(tick,500);tick();
 })()"""
