@@ -73,15 +73,15 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) setAuto(false); false }
+        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
         urlInput.setOnEditorActionListener { _, a, _ -> if (a == EditorInfo.IME_ACTION_GO) { go(urlInput.text.toString()); true } else false }
         findViewById<View>(R.id.backBtn).setOnClickListener { if (web.canGoBack()) web.goBack() }
         findViewById<View>(R.id.settingsBtn).setOnClickListener { showSettings() }
         findViewById<View>(R.id.menuBtn).setOnClickListener { topBar.visibility = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
-        twoBtn.setOnClickListener { setTwo(!two) }
-        autoBtn.setOnClickListener { setAuto(!auto) }
+        twoBtn.setOnClickListener { applyTwo(!two) }
+        autoBtn.setOnClickListener { applyAuto(!auto) }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         updateTwoBtn()
@@ -90,8 +90,8 @@ class MainActivity : Activity() {
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
     }
 
-    override fun onDestroy() { setAuto(false); web.destroy(); super.onDestroy() }
-    override fun onPause() { setAuto(false); super.onPause() }
+    override fun onDestroy() { applyAuto(false); web.destroy(); super.onDestroy() }
+    override fun onPause() { applyAuto(false); super.onPause() }
     @Deprecated("") override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
         KeyEvent.KEYCODE_VOLUME_DOWN -> { pageScroll(1); true }
@@ -108,7 +108,7 @@ class MainActivity : Activity() {
 
     // ---- 두쪽 보기 (페이지 DOM 내 큰 이미지를 2열 그리드로 재배치, 작은 배너/광고 이미지는 제외) ----
     private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
-    private fun setTwo(v: Boolean) {
+    private fun applyTwo(v: Boolean) {
         val was = two; two = v; updateTwoBtn()
         if (was && !v) web.reload() else injectScript()
     }
@@ -147,7 +147,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun setAuto(v: Boolean) {
+    private fun applyAuto(v: Boolean) {
         if (auto == v) return
         auto = v; autoBtn.text = if (v) "정지" else "자동"
         if (v) { pageAnim?.cancel(); frame.last = 0L; frame.acc = 0f; Choreographer.getInstance().postFrameCallback(frame) }
