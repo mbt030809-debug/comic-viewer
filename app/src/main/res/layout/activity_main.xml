@@ -1,46 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:background="#111111">
+    android:layout_width="match_parent" android:layout_height="match_parent" android:background="#111111">
 
     <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
         android:orientation="vertical">
-
         <LinearLayout android:id="@+id/topBar" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/backBtn" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="◀" />
             <EditText android:id="@+id/urlInput" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:hint="웹 주소 입력" android:inputType="textUri"
                 android:imeOptions="actionGo" android:singleLine="true" android:textColor="#FFFFFF"
                 android:textColorHint="#888888" />
             <Button android:id="@+id/goBtn" android:layout_width="wrap_content"
-                android:layout_height="wrap_content" android:text="열기" />
+                android:layout_height="wrap_content" android:text="이동" />
             <Button android:id="@+id/settingsBtn" android:layout_width="wrap_content"
                 android:layout_height="wrap_content" android:text="설정" />
         </LinearLayout>
-
-        <TextView android:id="@+id/status" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textColor="#BBBBBB" android:padding="4dp"
-            android:visibility="gone" />
-
-        <FrameLayout android:id="@+id/mainFrame" android:layout_width="match_parent"
-            android:layout_height="0dp" android:layout_weight="1">
-            <androidx.recyclerview.widget.RecyclerView android:id="@+id/main"
-                android:layout_width="match_parent" android:layout_height="match_parent" />
-        </FrameLayout>
-
-        <FrameLayout android:id="@+id/previewPanel" android:layout_width="match_parent"
-            android:layout_height="0dp" android:background="#000000" android:clipChildren="true">
-            <androidx.recyclerview.widget.RecyclerView android:id="@+id/preview"
-                android:layout_width="match_parent" android:layout_height="match_parent" />
-            <View android:id="@+id/previewTouch" android:layout_width="match_parent"
-                android:layout_height="match_parent" android:clickable="true" />
-        </FrameLayout>
+        <WebView android:id="@+id/web" android:layout_width="match_parent"
+            android:layout_height="0dp" android:layout_weight="1" />
     </LinearLayout>
 
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_gravity="end|center_vertical" android:orientation="vertical" android:alpha="0.75">
-        <Button android:id="@+id/menuBtn" android:layout_width="56dp" android:layout_height="56dp" android:text="☰" />
-        <Button android:id="@+id/upBtn" android:layout_width="56dp" android:layout_height="56dp" android:text="▲" />
-        <Button android:id="@+id/downBtn" android:layout_width="56dp" android:layout_height="56dp" android:text="▼" />
+        android:layout_gravity="end|center_vertical" android:orientation="vertical" android:alpha="0.7">
+        <Button android:id="@+id/menuBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="☰" />
+        <Button android:id="@+id/twoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="두쪽" />
+        <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="자동" />
+        <Button android:id="@+id/upBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▲" />
+        <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▼" />
     </LinearLayout>
 </FrameLayout>

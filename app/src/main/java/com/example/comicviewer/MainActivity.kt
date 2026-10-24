@@ -1,209 +1,164 @@
 package com.example.comicviewer
 
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.Context
 import android.content.SharedPreferences
-import android.graphics.Color
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.view.Choreographer
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.view.animation.AccelerateDecelerateInterpolator
-import android.webkit.CookieManager
+import android.webkit.*
 import android.widget.*
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import coil.ImageLoader
-import okhttp3.OkHttpClient
-import kotlin.math.max
 
+/** 웹툰 전용 브라우저: 웹페이지 그대로 + 두쪽 보기 + 자동/페이지 스크롤 */
 class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
-    private lateinit var loader: ImageLoader
-    private lateinit var extractor: ImageExtractor
-    private lateinit var main: RecyclerView
-    private lateinit var preview: RecyclerView
-    private lateinit var mainFrame: View
-    private lateinit var panel: View
-    private lateinit var topBar: View
-    private lateinit var status: TextView
+    private lateinit var web: WebView
     private lateinit var urlInput: EditText
+    private lateinit var topBar: View
+    private lateinit var autoBtn: Button
+    private lateinit var twoBtn: Button
 
-    private var urls: List<String> = emptyList()
-    private var pageUrl = ""
-    private var anim: ValueAnimator? = null
-
-    // 설정값
-    private var twoPage get() = prefs.getBoolean("two", false); set(v) = prefs.edit().putBoolean("two", v).apply()
+    private var two get() = prefs.getBoolean("two", false); set(v) = prefs.edit().putBoolean("two", v).apply()
     private var rtl get() = prefs.getBoolean("rtl", false); set(v) = prefs.edit().putBoolean("rtl", v).apply()
-    private var cover get() = prefs.getBoolean("cover", true); set(v) = prefs.edit().putBoolean("cover", v).apply()
-    private var scrollMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
-    private var previewPct get() = prefs.getInt("pv", 25); set(v) = prefs.edit().putInt("pv", v).apply()
+    private var cover get() = prefs.getBoolean("cover", false); set(v) = prefs.edit().putBoolean("cover", v).apply()
+    private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
+    private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
+    private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply() // px/sec
 
-    private inner class AheadLM(ctx: Context) : LinearLayoutManager(ctx) {
-        override fun calculateExtraLayoutSpace(state: RecyclerView.State, extra: IntArray) {
-            extra[1] = max(height, 1) * 2
-        }
-    }
+    private var pageAnim: ValueAnimator? = null
+    private var auto = false
 
+    private val adHosts = listOf(
+        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google",
+        "adnxs.com", "taboola.com", "outbrain.com", "criteo.", "adsterra", "popads", "popcash",
+        "exoclick", "propellerads", "adsystem", "moatads", "2mdn.net", "adform.net", "adcash",
+    )
+
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         setContentView(R.layout.activity_main)
         prefs = getSharedPreferences("cv", MODE_PRIVATE)
-        main = findViewById(R.id.main); preview = findViewById(R.id.preview)
-        mainFrame = findViewById(R.id.mainFrame); panel = findViewById(R.id.previewPanel)
-        topBar = findViewById(R.id.topBar); status = findViewById(R.id.status)
-        urlInput = findViewById(R.id.urlInput)
-        extractor = ImageExtractor(findViewById(R.id.root))
+        web = findViewById(R.id.web); urlInput = findViewById(R.id.urlInput)
+        topBar = findViewById(R.id.topBar); autoBtn = findViewById(R.id.autoBtn); twoBtn = findViewById(R.id.twoBtn)
 
-        loader = ImageLoader.Builder(this).okHttpClient(
-            OkHttpClient.Builder().addInterceptor { c ->
-                val r = c.request()
-                val nb = r.newBuilder().header("User-Agent", ImageExtractor.UA)
-                if (pageUrl.isNotEmpty()) nb.header("Referer", pageUrl)
-                CookieManager.getInstance().getCookie(r.url.toString())?.let { nb.header("Cookie", it) }
-                c.proceed(nb.build())
-            }.build()
-        ).crossfade(false).build()
+        web.settings.apply {
+            javaScriptEnabled = true; domStorageEnabled = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+            setSupportMultipleWindows(false); javaScriptCanOpenWindowsAutomatically = false
+        }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        web.webChromeClient = WebChromeClient()
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(v: WebView, u: String, f: Bitmap?) { urlInput.setText(u); prefs.edit().putString("last", u).apply() }
+            override fun onPageFinished(v: WebView, u: String) { injectScript() }
+            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
+                if (adblock) {
+                    val h = r.url.host ?: ""
+                    if (adHosts.any { h.contains(it) }) return WebResourceResponse("text/plain", "utf-8", null)
+                }
+                return null
+            }
+            override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                val s = r.url.scheme
+                return s != "http" && s != "https"
+            }
+        }
+        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) setAuto(false); false }
 
-        main.layoutManager = AheadLM(this)
-        preview.layoutManager = LinearLayoutManager(this)
-        main.setItemViewCacheSize(4)
-        main.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = syncPreview()
-        })
-        mainFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> layoutPreview() }
-
-        findViewById<View>(R.id.goBtn).setOnClickListener { open(urlInput.text.toString()) }
-        urlInput.setOnEditorActionListener { _, a, _ -> if (a == EditorInfo.IME_ACTION_GO) { open(urlInput.text.toString()); true } else false }
+        findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
+        urlInput.setOnEditorActionListener { _, a, _ -> if (a == EditorInfo.IME_ACTION_GO) { go(urlInput.text.toString()); true } else false }
+        findViewById<View>(R.id.backBtn).setOnClickListener { if (web.canGoBack()) web.goBack() }
         findViewById<View>(R.id.settingsBtn).setOnClickListener { showSettings() }
         findViewById<View>(R.id.menuBtn).setOnClickListener { topBar.visibility = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        twoBtn.setOnClickListener { setTwo(!two) }
+        autoBtn.setOnClickListener { setAuto(!auto) }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
-        findViewById<View>(R.id.previewTouch).setOnClickListener { pageScroll(1) }
+        updateTwoBtn()
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
-        urlInput.setText(shared ?: prefs.getString("last", ""))
-        if (shared != null) open(shared)
+        go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
     }
 
-    override fun onDestroy() { extractor.cancel(); super.onDestroy() }
-
+    override fun onDestroy() { setAuto(false); web.destroy(); super.onDestroy() }
+    override fun onPause() { setAuto(false); super.onPause() }
+    @Deprecated("") override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
         KeyEvent.KEYCODE_VOLUME_DOWN -> { pageScroll(1); true }
         KeyEvent.KEYCODE_VOLUME_UP -> { pageScroll(-1); true }
         else -> super.onKeyDown(k, e)
     }
 
-    private fun open(raw: String) {
-        var u = raw.trim()
-        if (u.isEmpty()) return
-        if (!u.startsWith("http")) u = "https://$u"
-        urlInput.setText(u); prefs.edit().putString("last", u).apply()
+    private fun go(raw: String) {
+        var u = raw.trim(); if (u.isEmpty()) return
+        if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
-        pageUrl = u
-        status.visibility = View.VISIBLE
-        if (Regex("\\.(jpe?g|png|webp|gif)(\\?.*)?$", RegexOption.IGNORE_CASE).containsMatchIn(u)) {
-            urls = listOf(u); applyRows(0); status.visibility = View.GONE; return
-        }
-        extractor.extract(u, { status.text = it }, {
-            extractor.cancel()
-            urls = it
-            status.text = "이미지 ${it.size}장"
-            if (it.isEmpty()) status.text = "이미지를 찾지 못했습니다" else topBar.visibility = View.GONE
-            applyRows(0)
-        }, { status.text = "오류: $it" })
+        web.loadUrl(u)
     }
 
-    /** 설정/이미지 변경 시 어댑터 재구성. keepIdx: 유지할 첫 이미지 인덱스 */
-    private fun applyRows(keepIdx: Int) {
-        val two = twoPage
-        val cols = if (two) 2 else 1
-        val rows = ArrayList<List<String>>()
-        var i = 0
-        if (two && cover && urls.isNotEmpty()) { rows.add(listOf(urls[0])); i = 1 }
-        while (i < urls.size) {
-            val r = if (two) urls.subList(i, minOf(i + 2, urls.size)) else listOf(urls[i])
-            rows.add(if (rtl && r.size == 2) r.reversed() else r)
-            i += cols
-        }
-        val w = resources.displayMetrics.widthPixels / cols
-        val syncCb = { syncPreview() }
-        main.adapter = RowAdapter(loader, rows, cols, w, syncCb)
-        preview.adapter = RowAdapter(loader, rows, cols, w, {})
-        val pos = rows.indexOfFirst { r -> r.contains(urls.getOrNull(keepIdx)) }.coerceAtLeast(0)
-        (main.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(pos, 0)
-        main.post { layoutPreview(); syncPreview() }
+    // ---- 두쪽 보기 (페이지 DOM 내 큰 이미지를 2열 그리드로 재배치, 작은 배너/광고 이미지는 제외) ----
+    private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
+    private fun setTwo(v: Boolean) {
+        val was = two; two = v; updateTwoBtn()
+        if (was && !v) web.reload() else injectScript()
     }
 
-    private fun currentFirstIdx(): Int {
-        val a = main.adapter as? RowAdapter ?: return 0
-        val p = (main.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
-        if (p < 0) return 0
-        return urls.indexOf(a.rows.getOrNull(p)?.firstOrNull())
+    private fun injectScript() {
+        web.evaluateJavascript(SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__COVER__", "$cover"), null)
     }
 
-    // ---- 미리보기: 메인 현재 위치에서 한 페이지(메인 높이) 아래 영역을 축소 표시 ----
-    private fun layoutPreview() {
-        val total = (mainFrame.parent as View).height
-        if (total == 0) return
-        val ph = if (previewPct == 0 || urls.isEmpty()) 0 else total * previewPct / 100
-        val lp = panel.layoutParams
-        if (lp.height != ph) { lp.height = ph; panel.layoutParams = lp; return }
-        val hm = mainFrame.height
-        if (ph == 0 || hm == 0) { panel.visibility = View.GONE; return }
-        panel.visibility = View.VISIBLE
-        val plp = preview.layoutParams as FrameLayout.LayoutParams
-        if (plp.height != hm || plp.width != mainFrame.width) {
-            plp.width = mainFrame.width; plp.height = hm; preview.layoutParams = plp
-        }
-        val k = ph.toFloat() / hm
-        preview.pivotX = mainFrame.width / 2f; preview.pivotY = 0f
-        preview.scaleX = k; preview.scaleY = k
-    }
-
-    private fun syncPreview() {
-        if (panel.visibility != View.VISIBLE) return
-        val hm = main.height
-        for (i in 0 until main.childCount) {
-            val c = main.getChildAt(i)
-            if (c.top <= hm && hm < c.bottom) {
-                val p = main.getChildAdapterPosition(c)
-                val off = c.top - hm
-                val cur = (preview.layoutManager as LinearLayoutManager).findViewByPosition(p)
-                if (cur == null || cur.top != off)
-                    (preview.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(p, off)
-                return
-            }
-        }
-    }
-
-    // ---- 1페이지 스크롤(부드러움 = 애니메이션 시간) ----
+    // ---- 스크롤 ----
     private fun pageScroll(dir: Int) {
-        val dist = (main.height * 0.95f).toInt() * dir
-        anim?.cancel()
-        val ms = scrollMs
-        if (ms == 0) { main.scrollBy(0, dist); return }
-        var last = 0f
-        anim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ms.toLong(); interpolator = AccelerateDecelerateInterpolator()
+        val dist = (web.height * 0.95f).toInt() * dir
+        pageAnim?.cancel()
+        if (smoothMs == 0) { web.scrollBy(0, dist); return }
+        var done = 0
+        pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = smoothMs.toLong(); interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener {
-                val v = it.animatedValue as Float
-                main.scrollBy(0, ((v - last) * dist).toInt().let { d -> if (v >= 1f) (dist - (last * dist).toInt()) else d })
-                last = v
+                val target = (it.animatedValue as Float * dist).toInt()
+                web.scrollBy(0, target - done); done = target
             }
             start()
         }
     }
 
+    private val frame = object : Choreographer.FrameCallback {
+        var last = 0L; var acc = 0f
+        override fun doFrame(t: Long) {
+            if (!auto) return
+            if (last != 0L) {
+                acc += autoSpeed * (t - last) / 1e9f
+                val d = acc.toInt()
+                if (d != 0) { web.scrollBy(0, d); acc -= d }
+            }
+            last = t
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    private fun setAuto(v: Boolean) {
+        if (auto == v) return
+        auto = v; autoBtn.text = if (v) "정지" else "자동"
+        if (v) { pageAnim?.cancel(); frame.last = 0L; frame.acc = 0f; Choreographer.getInstance().postFrameCallback(frame) }
+        else Choreographer.getInstance().removeFrameCallback(frame)
+    }
+
     private fun showSettings() {
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = Switch(this).apply { text = t; isChecked = v; setOnCheckedChangeListener { _, c -> f(c) } }.also { box.addView(it) }
+        var needInject = false; var needReload = false
+        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = box.addView(Switch(this).apply { text = t; isChecked = v; setOnCheckedChangeListener { _, c -> f(c) } })
         fun bar(t: String, max: Int, v: Int, fmt: (Int) -> String, f: (Int) -> Unit) {
             val l = TextView(this).apply { text = t + fmt(v) }
             box.addView(l)
@@ -216,14 +171,53 @@ class MainActivity : Activity() {
                 })
             })
         }
-        var changed = false
-        sw("두쪽 보기", twoPage) { twoPage = it; changed = true }
-        sw("오른쪽→왼쪽 (만화책 방식)", rtl) { rtl = it; changed = true }
-        sw("첫 장 단독(표지)", cover) { cover = it; changed = true }
-        bar("스크롤 부드러움(애니메이션) ", 20, scrollMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { scrollMs = it * 100 }
-        bar("다음 페이지 미리보기 높이 ", 40, previewPct, { if (it == 0) "끔" else "$it%" }) { previewPct = it; changed = true }
+        sw("두쪽 보기", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
+        sw("오른쪽→왼쪽 (만화책 방식)", rtl) { rtl = it; needInject = true }
+        sw("첫 장 단독(표지)", cover) { cover = it; needReload = true }
+        sw("광고 도메인 차단", adblock) { adblock = it }
+        bar("페이지 스크롤 부드러움 ", 20, smoothMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { smoothMs = it * 100 }
+        bar("자동 스크롤 속도 ", 58, (autoSpeed - 20) / 10, { "${20 + it * 10}px/s" }) { autoSpeed = 20 + it * 10 }
         AlertDialog.Builder(this).setTitle("설정").setView(box).setPositiveButton("확인") { _, _ ->
-            if (changed && urls.isNotEmpty()) { val k = currentFirstIdx().coerceAtLeast(0); applyRows(k) }
+            updateTwoBtn()
+            if (needReload) web.reload() else if (needInject) injectScript()
         }.show()
+    }
+
+    companion object {
+        private const val SCRIPT = """(function(){
+window.__cvOpts={two:__TWO__,rtl:__RTL__,cover:__COVER__};
+if(window.__cvTimer)return;
+var cnt=0;
+function big(i){var w=i.naturalWidth,h=i.naturalHeight;
+ if(!w||!h||w<400||h<300||w/h>3)return false;
+ return i.getBoundingClientRect().width>=window.innerWidth*0.4;}
+function tick(){
+ var o=window.__cvOpts,imgs=[].slice.call(document.images);
+ imgs.forEach(function(i){
+  if(i.__cvi===undefined)i.__cvi=cnt++;
+  var d=i.getAttribute('data-src')||i.getAttribute('data-original')||i.getAttribute('data-lazy-src');
+  if(d&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&&i.getBoundingClientRect().top<window.innerHeight*3){
+   i.__cvl=1;i.loading='eager';i.src=d;}
+ });
+ if(!o.two)return;
+ var c=imgs.filter(function(i){return !i.closest('#cv-grid')&&big(i)});
+ var g=document.getElementById('cv-grid');
+ if(!g&&!c.length)return;
+ if(!g){g=document.createElement('div');g.id='cv-grid';
+  g.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:0;width:100%;align-items:start';
+  c[0].parentNode.insertBefore(g,c[0]);}
+ g.style.direction=o.rtl?'rtl':'ltr';
+ c.forEach(function(i){
+  var ref=null,k=g.children;
+  for(var n=0;n<k.length;n++){if(k[n].__cvi>i.__cvi){ref=k[n];break}}
+  g.insertBefore(i,ref);
+  i.style.cssText='width:100%;height:auto;max-width:none;display:block;margin:0';});
+ for(var n=0;n<g.children.length;n++){var e=g.children[n];
+  var wide=e.naturalWidth>e.naturalHeight*1.1,cv=(n==0&&o.cover);
+  e.style.gridColumn=(wide||cv)?'1 / 3':'auto';
+  e.style.width=(cv&&!wide)?'50%':'100%';e.style.margin=(cv&&!wide)?'0 auto':'0';}
+}
+window.__cvTimer=setInterval(tick,800);tick();
+})()"""
     }
 }
