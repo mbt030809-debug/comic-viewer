@@ -493,7 +493,7 @@ class MainActivity : Activity() {
         // 두쪽 보기: 연속 세로 스트립을 좌/우 두 패널로 표시(왼쪽=현재 위치, 오른쪽=한 화면 아래).
         // 문서 스크롤(native)에 맞춰 두 스트립을 translate. 광고 제외 규칙은 사이트(localStorage)별 저장.
         private const val SCRIPT = """(function(){
-var o=window.__cvOpts={two:__TWO__,rtl:__RTL__,gap:__GAP__};
+var o=window.__cvOpts=window.__cvOpts||{};o.two=__TWO__;o.rtl=__RTL__;o.gap=__GAP__;
 if(window.__cvTimer){window.__cvTick();return}
 var diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
 function key(u){return (u||'').split('?')[0]}
