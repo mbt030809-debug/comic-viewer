@@ -30,12 +30,8 @@
                 android:layout_height="wrap_content" android:text="기록" />
             <Button android:id="@+id/settingsBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="설정" />
-        </LinearLayout>
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal">
             <Button android:id="@+id/twoBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="두쪽" />
-                android:layout_height="wrap_content" android:text="자동" />
             <Button android:id="@+id/topBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="맨위로" />
         </LinearLayout>
@@ -62,7 +58,7 @@
 
     <FrameLayout android:id="@+id/scrollTrack" android:layout_width="32dp" android:layout_height="match_parent"
         android:layout_gravity="end" android:layout_marginTop="110dp" android:layout_marginBottom="16dp">
-        <View android:id="@+id/scrollThumb" android:layout_width="3dp" android:layout_height="16dp"
+        <View android:id="@+id/scrollThumb" android:layout_width="6dp" android:layout_height="32dp"
             android:layout_gravity="end" android:layout_marginEnd="6dp" android:visibility="gone" />
     </FrameLayout>
 </FrameLayout>
