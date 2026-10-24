@@ -2,41 +2,49 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent" android:background="#111111">
 
-    <WebView android:id="@+id/web" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <WebView android:id="@+id/web" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:scrollbars="none" />
 
+    <!-- 주소는 별도 행, 버튼은 아래 행 -->
     <LinearLayout android:id="@+id/topBar" android:layout_width="match_parent"
-        android:layout_height="wrap_content" android:orientation="horizontal"
+        android:layout_height="wrap_content" android:orientation="vertical"
         android:layout_gravity="top" android:background="#DD111111">
-        <Button android:id="@+id/backBtn" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="◀" />
-        <EditText android:id="@+id/urlInput" android:layout_width="0dp" android:layout_weight="1"
+        <EditText android:id="@+id/urlInput" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:hint="웹 주소 입력" android:inputType="textUri"
             android:imeOptions="actionGo" android:singleLine="true" android:textColor="#FFFFFF"
-            android:textColorHint="#888888" />
-        <Button android:id="@+id/goBtn" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="이동" />
-        <Button android:id="@+id/bookmarkBtn" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="★" />
-        <Button android:id="@+id/historyBtn" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="기록" />
-        <Button android:id="@+id/settingsBtn" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="설정" />
+            android:textColorHint="#888888" android:paddingStart="12dp" android:paddingEnd="12dp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/backBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="◀" />
+            <Button android:id="@+id/goBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="이동" />
+            <Button android:id="@+id/bookmarkBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="★" />
+            <Button android:id="@+id/historyBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="기록" />
+            <Button android:id="@+id/settingsBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="설정" />
+        </LinearLayout>
     </LinearLayout>
 
     <Button android:id="@+id/nextBtn" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="24dp"
         android:text="다음화 ▶" android:visibility="gone" />
 
-    <LinearLayout android:id="@+id/btnBox" android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_gravity="end|center_vertical" android:layout_marginEnd="32dp" android:orientation="vertical" android:alpha="0.7">
+    <!-- 플로팅 버튼: 꾹 눌러 드래그하면 위치 변경(저장) -->
+    <FrameLayout android:id="@+id/btnLayer" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:clipChildren="false">
         <Button android:id="@+id/menuBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="☰" />
         <Button android:id="@+id/twoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="두쪽" />
         <Button android:id="@+id/autoBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="자동" />
         <Button android:id="@+id/topBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="⤒" />
-    </LinearLayout>
+        <Button android:id="@+id/upBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▲" />
+        <Button android:id="@+id/downBtn" android:layout_width="52dp" android:layout_height="52dp" android:text="▼" />
+    </FrameLayout>
 
     <FrameLayout android:id="@+id/scrollTrack" android:layout_width="32dp" android:layout_height="match_parent"
-        android:layout_gravity="end" android:layout_marginTop="64dp" android:layout_marginBottom="16dp">
+        android:layout_gravity="end" android:layout_marginTop="110dp" android:layout_marginBottom="16dp">
         <View android:id="@+id/scrollThumb" android:layout_width="12dp" android:layout_height="64dp"
             android:layout_gravity="end" android:layout_marginEnd="4dp" android:visibility="gone" />
     </FrameLayout>

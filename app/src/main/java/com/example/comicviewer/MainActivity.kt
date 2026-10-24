@@ -42,7 +42,6 @@ class MainActivity : Activity() {
     private var gap get() = prefs.getInt("gap", 8); set(v) = prefs.edit().putInt("gap", v).apply()
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
-    private var tapNav get() = prefs.getBoolean("tapNav", true); set(v) = prefs.edit().putBoolean("tapNav", v).apply()
     private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
     private var autoFull get() = prefs.getBoolean("autoFull", true); set(v) = prefs.edit().putBoolean("autoFull", v).apply()
@@ -79,6 +78,7 @@ class MainActivity : Activity() {
         applyKeepOn()
         initScrollBar()
 
+        web.isVerticalScrollBarEnabled = false; web.isHorizontalScrollBarEnabled = false
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -111,16 +111,7 @@ class MainActivity : Activity() {
                 return s != "http" && s != "https"
             }
         }
-        // 화면 위 1/3 탭 = 이전, 아래 1/3 탭 = 다음 (스크롤/드래그 제스처는 제외)
-        val tapDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
-                if (tapNav && web.height > 0) {
-                    if (e.y < web.height / 3f) pageScroll(-1) else if (e.y > web.height * 2f / 3f) pageScroll(1)
-                }
-                return false
-            }
-        })
-        web.setOnTouchListener { _, e -> tapDetector.onTouchEvent(e); if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
+        web.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_DOWN && auto) applyAuto(false); false }
         web.setOnScrollChangeListener { _, _, y, _, oy -> onScrolled(y, y - oy) }
 
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
@@ -133,8 +124,10 @@ class MainActivity : Activity() {
         twoBtn.setOnClickListener { applyTwo(!two) }
         autoBtn.setOnClickListener { applyAuto(!auto) }
         nextBtn.setOnClickListener { goNext() }
+        findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
+        findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0); setFull(false) }
-        updateTwoBtn(); applyBtnAlpha(); applyScale()
+        updateTwoBtn(); applyBtnAlpha(); applyScale(); initDraggableButtons()
         if (foldAutoTwo && expanded) { two = true; updateTwoBtn() }
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
@@ -167,13 +160,77 @@ class MainActivity : Activity() {
         if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
+    // ---- 플로팅 버튼: 꾹 눌러 이동, 위치 저장 ----
+    private fun floatBtns(): List<View> = listOf(R.id.menuBtn, R.id.twoBtn, R.id.autoBtn, R.id.topBtn, R.id.upBtn, R.id.downBtn).map { findViewById<View>(it) }
+
+    private fun placeBtns() {
+        val layer = findViewById<View>(R.id.btnLayer)
+        val w = layer.width.toFloat(); val h = layer.height.toFloat()
+        if (w <= 0f) return
+        val size = 52 * density
+        val startY = (h - floatBtns().size * (size + 2 * density)) / 2f
+        floatBtns().forEachIndexed { i, v ->
+            val k = resources.getResourceEntryName(v.id)
+            val fx = prefs.getFloat("bx_$k", -1f); val fy = prefs.getFloat("by_$k", -1f)
+            val x = if (fx >= 0f) fx * w else w - size - 40 * density
+            val y = if (fy >= 0f) fy * h else startY + i * (size + 2 * density)
+            v.x = x.coerceIn(0f, w - size); v.y = y.coerceIn(0f, h - size)
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun initDraggableButtons() {
+        val layer = findViewById<View>(R.id.btnLayer)
+        layer.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, orr, ob -> if (r - l != orr - ol || b - t != ob - ot) placeBtns() }
+        layer.post { placeBtns() }
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        floatBtns().forEach { v ->
+            var downX = 0f; var downY = 0f; var offX = 0f; var offY = 0f
+            var dragging = false; var cancelled = false
+            val lp = Runnable { dragging = true; v.scaleX = 1.25f; v.scaleY = 1.25f; v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+            v.setOnTouchListener { view, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = e.rawX; downY = e.rawY; offX = view.x - e.rawX; offY = view.y - e.rawY
+                        dragging = false; cancelled = false
+                        handler2.postDelayed(lp, 500); true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (dragging) {
+                            view.parent.requestDisallowInterceptTouchEvent(true)
+                            val pw = layer.width.toFloat(); val ph = layer.height.toFloat()
+                            view.x = (e.rawX + offX).coerceIn(0f, pw - view.width); view.y = (e.rawY + offY).coerceIn(0f, ph - view.height)
+                        } else if (abs(e.rawX - downX) > slop || abs(e.rawY - downY) > slop) { cancelled = true; handler2.removeCallbacks(lp) }
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        handler2.removeCallbacks(lp)
+                        if (dragging) {
+                            view.scaleX = 1f; view.scaleY = 1f
+                            val k = resources.getResourceEntryName(view.id)
+                            prefs.edit().putFloat("bx_$k", view.x / layer.width).putFloat("by_$k", view.y / layer.height).apply()
+                            dragging = false
+                        } else if (e.actionMasked == MotionEvent.ACTION_UP && !cancelled) view.performClick()
+                        true
+                    }
+                    else -> true
+                }
+            }
+        }
+    }
+    private val handler2 = Handler(Looper.getMainLooper()) // onPageStarted의 handler 정리와 분리
+    private fun resetBtnPositions() {
+        val ed = prefs.edit(); prefs.all.keys.filter { it.startsWith("bx_") || it.startsWith("by_") }.forEach { ed.remove(it) }; ed.apply()
+        placeBtns()
+    }
+
     /** 이미지 너비: 웹뷰 좌우에 검정 여백을 주어 페이지를 좁게(작게) 표시 */
     private fun applyScale() {
         val m = (resources.displayMetrics.widthPixels * (100 - imgScale) / 200f).toInt()
         val lp = web.layoutParams as FrameLayout.LayoutParams
         if (lp.leftMargin != m || lp.rightMargin != m) { lp.leftMargin = m; lp.rightMargin = m; web.layoutParams = lp }
     }
-    private fun applyBtnAlpha() { findViewById<View>(R.id.btnBox).alpha = btnAlpha / 100f }
+    private fun applyBtnAlpha() { floatBtns().forEach { it.alpha = btnAlpha / 100f } }
     private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
     private fun applyTwo(v: Boolean) {
         val was = two; two = v; updateTwoBtn()
@@ -491,11 +548,11 @@ class MainActivity : Activity() {
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
         sw("스크롤 시 전체화면 (아래=숨김 / 위=표시)", autoFull) { autoFull = it }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
-        head("[화면 터치 / 볼륨키 이동]")
-        sw("화면 위 1/3 터치=이전, 아래 1/3 터치=다음", tapNav) { tapNav = it }
+        head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
+        box.addView(Button(this).apply { text = "버튼 위치 초기화 (버튼은 꾹 눌러 드래그로 이동)"; setOnClickListener { resetBtnPositions() } })
         head("[자동 버튼: 계속 흐르는 스크롤]")
         sw("자동 방식2: 1페이지 이동 후 대기를 반복 (끄면 연속 스크롤)", autoPageMode) { autoPageMode = it }
         bar("[방식1: 연속] 속도 ", 20, 2000, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
