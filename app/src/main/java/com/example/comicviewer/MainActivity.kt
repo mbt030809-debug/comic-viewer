@@ -461,6 +461,15 @@ class MainActivity : Activity() {
         head("[자동 버튼: 계속 흐르는 스크롤]")
         bar("자동 스크롤 속도 ", 20, 600, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
         sw("끝에 도달하면 다음화로 자동 이동", autoNext) { autoNext = it }
+        box.addView(Button(this).apply {
+            text = "두쪽 보기 진단 (문제 시 결과를 알려주세요)"
+            setOnClickListener {
+                web.evaluateJavascript("window.__cvInfo?window.__cvInfo():'스크립트 미실행'") { r ->
+                    AlertDialog.Builder(this@MainActivity).setTitle("진단")
+                        .setMessage((r ?: "").trim('"').replace("\\u003C", "<")).setPositiveButton("확인", null).show()
+                }
+            }
+        })
         head("[광고]")
         sw("광고 도메인 차단", adblock) { adblock = it }
         box.addView(Button(this).apply {
@@ -491,17 +500,18 @@ function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];return r}catch(e){return {urls:[],idx:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
 function big(i){var w=i.naturalWidth,h=i.naturalHeight;
- if(!w||!h||w<350||h<250||w/h>3)return false;
+ if(!w||!h||w<350||h<100||w/h>8)return false;
  var r=i.getBoundingClientRect();
- return r.width==0||r.width>=window.innerWidth*0.4;}
+ return r.width==0||r.width>=window.innerWidth*0.6;}
 function lazySrc(i){var n=['data-src','data-original','data-lazy-src','data-lazy','data-url','data-origin','data-echo','lazy-src','data-actualsrc'];
  for(var k=0;k<n.length;k++){var v=i.getAttribute(n[k]);if(v&&/^(https?:)?\/\/|^\/|\.(jpe?g|png|webp|gif)/i.test(v))return v}
  return null}
 var swept=0;
+function needSweep(imgs){return imgs.some(function(i){return !i.naturalWidth&&(i.getBoundingClientRect().height>=100||lazySrc(i)||i.loading=='lazy')})}
 function sweep(){swept=1;var st=box('cv-diag','bottom:0;background:#c00');st.textContent='두쪽 보기: 이미지 불러오는 중...';
  var y=0,n=0;(function step(){var H=window.innerHeight;window.scrollTo(0,y);y+=H*0.8;n++;
-  if(y<document.documentElement.scrollHeight&&n<80)setTimeout(step,200);
-  else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},1200)})();}
+  if(y<document.documentElement.scrollHeight&&n<30)setTimeout(step,200);
+  else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},800)})();}
 function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
 function build(){
  var st=mk('style','cv-style');
@@ -525,7 +535,8 @@ function upd(){if(!root)return;
  spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';}
 function rebuild(){strips.forEach(function(s){s.innerHTML=''});
  [].forEach.call(document.images,function(i){i.__cva=0});tick();}
-function tick(){
+function tick(){try{tick0()}catch(e){window.__cvErr=String(e&&e.message||e);if(!window.__cvErrShown){window.__cvErrShown=1;var d=box('cv-err','bottom:0;background:#c00');d.textContent='두쪽 보기 오류: '+window.__cvErr;setTimeout(function(){d.remove()},8000)}}}
+function tick0(){
  var imgs=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
  imgs.forEach(function(i){
   if(i.__cvi===undefined)i.__cvi=cnt++;
@@ -543,12 +554,16 @@ function tick(){
   if(i.__cvhid){i.style.display='';i.__cvhid=0}
  });
  if(!o.two)return;
- if(!root){if(swept==0){sweep();return}if(swept==1)return;build()}
+ if(!root){if(swept==0&&(bigs.length<4||needSweep(imgs))){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
  upd();
  if(!window.__cvDiag&&++diag>8&&!strips[0].children.length){window.__cvDiag=1;
-  var d=box('cv-diag','bottom:0;background:#c00');d.textContent='두쪽 보기: 큰 이미지를 찾지 못했습니다 (페이지 이미지 '+imgs.length+'개)';
+  var d=box('cv-diag','bottom:0;background:#c00');d.textContent='두쪽 보기: 큰 이미지를 찾지 못했습니다 / '+info();
   setTimeout(function(){d.remove()},6000);}}
+function info(){var im=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
+ var sz=im.map(function(i){return i.naturalWidth+'x'+i.naturalHeight+'('+Math.round(i.getBoundingClientRect().width)+')'}).sort(function(a,b){return parseInt(b)*parseInt(b.split('x')[1])-parseInt(a)*parseInt(a.split('x')[1])}).slice(0,5);
+ return 'img '+im.length+'개, 큰 이미지 '+im.filter(big).length+'개, 상위: '+sz.join(', ')+(window.__cvErr?' / 오류: '+window.__cvErr:'')+' / 패널 '+(strips[0]?strips[0].children.length:'없음')+' / iframe '+document.querySelectorAll('iframe').length+' / canvas '+document.querySelectorAll('canvas').length;}
+window.__cvInfo=info;
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
