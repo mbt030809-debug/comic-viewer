@@ -556,7 +556,18 @@ class MainActivity : Activity() {
         head("[자동 버튼: 계속 흐르는 스크롤]")
         sw("자동 방식2: 1페이지 이동 후 대기를 반복 (끄면 연속 스크롤)", autoPageMode) { autoPageMode = it }
         bar("[방식1: 연속] 속도 ", 20, 2000, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
-        bar("[방식2] 1페이지 이동 후 대기 ", 5, 600, autoWait, { "${it / 10}.${it % 10}초" }) { autoWait = it }
+        box.addView(TextView(this).apply { text = "[방식2] 1페이지 이동 후 대기 시간(초, 예: 2.3)" })
+        box.addView(EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(String.format(java.util.Locale.US, "%.1f", autoWait / 10f))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(e: android.text.Editable?) {
+                    e?.toString()?.toFloatOrNull()?.let { autoWait = (it * 10).toInt().coerceIn(1, 3600) } // 0.1초~360초
+                }
+                override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+                override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+            })
+        })
         sw("끝에 도달하면 다음화로 자동 이동", autoNext) { autoNext = it }
         box.addView(Button(this).apply {
             text = "두쪽 보기 진단 (문제 시 결과를 알려주세요)"
