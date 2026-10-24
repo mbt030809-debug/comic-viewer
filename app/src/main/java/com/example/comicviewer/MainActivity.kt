@@ -309,14 +309,14 @@ class MainActivity : Activity() {
     @SuppressLint("ClickableViewAccessibility")
     private fun initScrollBar() {
         track = findViewById(R.id.scrollTrack); thumb = findViewById(R.id.scrollThumb)
-        thumb.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 12 * density; setColor(0xCCFFFFFF.toInt()) }
+        thumb.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 2 * density; setColor(0xFF555555.toInt()) }
         var grab = 0f; var dragging = false
         track.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     // 손잡이를 직접 잡았을 때만 드래그 시작 (트랙의 다른 곳 터치는 무시)
                     val top = thumb.translationY
-                    if (thumb.visibility == View.VISIBLE && e.y >= top - 8 * density && e.y <= top + thumb.height + 8 * density) {
+                    if (thumb.visibility == View.VISIBLE && e.y >= top - 28 * density && e.y <= top + thumb.height + 28 * density) {
                         dragging = true; grab = e.y - top
                         applyAuto(false); pageAnim?.cancel()
                         track.parent.requestDisallowInterceptTouchEvent(true)

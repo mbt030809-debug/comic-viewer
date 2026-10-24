@@ -62,7 +62,7 @@
 
     <FrameLayout android:id="@+id/scrollTrack" android:layout_width="32dp" android:layout_height="match_parent"
         android:layout_gravity="end" android:layout_marginTop="110dp" android:layout_marginBottom="16dp">
-        <View android:id="@+id/scrollThumb" android:layout_width="12dp" android:layout_height="64dp"
-            android:layout_gravity="end" android:layout_marginEnd="4dp" android:visibility="gone" />
+        <View android:id="@+id/scrollThumb" android:layout_width="3dp" android:layout_height="16dp"
+            android:layout_gravity="end" android:layout_marginEnd="6dp" android:visibility="gone" />
     </FrameLayout>
 </FrameLayout>
