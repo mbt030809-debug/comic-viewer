@@ -278,7 +278,17 @@ class MainActivity : Activity() {
     private fun setFull(v: Boolean) {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
-        topBar.visibility = if (v) View.GONE else View.VISIBLE
+        // 메뉴 표시/숨김 애니메이션: 위에서 슬라이드 + 페이드, 300ms (One UI 기본 전환 속도/곡선과 유사)
+        val ip = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f)
+        val dist = (if (topBar.height > 0) topBar.height else (120 * density).toInt()).toFloat()
+        topBar.animate().cancel()
+        if (v) {
+            topBar.animate().translationY(-dist).alpha(0f).setDuration(300).setInterpolator(ip)
+                .withEndAction { if (full) topBar.visibility = View.GONE }.start()
+        } else {
+            if (topBar.visibility != View.VISIBLE) { topBar.translationY = -dist; topBar.alpha = 0f; topBar.visibility = View.VISIBLE }
+            topBar.animate().translationY(0f).alpha(1f).setDuration(300).setInterpolator(ip).start()
+        }
         if (Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.let {
                 if (v) { it.hide(WindowInsets.Type.systemBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
