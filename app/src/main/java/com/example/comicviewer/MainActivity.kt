@@ -78,7 +78,13 @@ class MainActivity : Activity() {
         nextBtn = findViewById(R.id.nextBtn)
         applyKeepOn()
         initScrollBar()
-
+        findViewById<View>(R.id.topBar).addOnLayoutChangeListener { v, _, t, _, b, _, _, _, _ ->
+            // 메뉴가 표시 중이면 웹페이지 상단 여백을 메뉴 높이에 맞춤(초기 표시/높이 변화 대응)
+            if (!full && menuAnim?.isRunning != true && v.visibility == View.VISIBLE) {
+                val p2 = web.layoutParams as FrameLayout.LayoutParams
+                if (p2.topMargin != b - t) { p2.topMargin = b - t; web.layoutParams = p2 }
+            }
+        }
         web.isVerticalScrollBarEnabled = false; web.isHorizontalScrollBarEnabled = false
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
@@ -269,6 +275,7 @@ class MainActivity : Activity() {
 
     // ---- 전체화면(아래로 스크롤=숨김, 위로 스크롤=표시) ----
     private var full = false
+    private var menuAnim: ValueAnimator? = null
     private var fullLockUntil = 0L
     private var dyAcc = 0
     private var touching = false
@@ -278,16 +285,30 @@ class MainActivity : Activity() {
     private fun setFull(v: Boolean) {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
-        // 메뉴 표시/숨김 애니메이션: 위에서 슬라이드 + 페이드, 300ms (One UI 기본 전환 속도/곡선과 유사)
-        val ip = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f)
-        val dist = (if (topBar.height > 0) topBar.height else (120 * density).toInt()).toFloat()
-        topBar.animate().cancel()
-        if (v) {
-            topBar.animate().translationY(-dist).alpha(0f).setDuration(300).setInterpolator(ip)
-                .withEndAction { if (full) topBar.visibility = View.GONE }.start()
-        } else {
-            if (topBar.visibility != View.VISIBLE) { topBar.translationY = -dist; topBar.alpha = 0f; topBar.visibility = View.VISIBLE }
-            topBar.animate().translationY(0f).alpha(1f).setDuration(300).setInterpolator(ip).start()
+        // 메뉴 표시/숨김 애니메이션(300ms, One UI 유사 곡선): 메뉴가 나오면 웹페이지가 아래로 밀리고, 숨기면 위로 올라옴
+        if (topBar.height == 0) {
+            topBar.measure(View.MeasureSpec.makeMeasureSpec(if (rootW > 0) rootW else resources.displayMetrics.widthPixels, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        }
+        val h = (if (topBar.height > 0) topBar.height else topBar.measuredHeight).coerceAtLeast(1)
+        val lp = web.layoutParams as FrameLayout.LayoutParams
+        val from = lp.topMargin; val to = if (v) 0 else h
+        menuAnim?.cancel()
+        topBar.visibility = View.VISIBLE
+        menuAnim = ValueAnimator.ofInt(from, to).apply {
+            duration = 300; interpolator = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f)
+            addUpdateListener {
+                val m = it.animatedValue as Int
+                val p2 = web.layoutParams as FrameLayout.LayoutParams
+                p2.topMargin = m; web.layoutParams = p2
+                topBar.translationY = (m - h).toFloat(); topBar.alpha = (m.toFloat() / h).coerceIn(0f, 1f)
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(a: android.animation.Animator) { cancelled = true }
+                override fun onAnimationEnd(a: android.animation.Animator) { if (!cancelled && full) topBar.visibility = View.GONE }
+            })
+            start()
         }
         if (Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.let {
