@@ -32,6 +32,7 @@ class MainActivity : Activity() {
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
     private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply() // 버튼 1회 이동 거리(화면 높이 %)
+    private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply() // 우측 버튼 불투명도(%)
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply() // px/sec
 
     private var pageAnim: ValueAnimator? = null
@@ -86,7 +87,7 @@ class MainActivity : Activity() {
         autoBtn.setOnClickListener { applyAuto(!auto) }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
-        updateTwoBtn()
+        updateTwoBtn(); applyBtnAlpha()
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
@@ -109,6 +110,7 @@ class MainActivity : Activity() {
     }
 
     // ---- 두쪽 보기 (페이지 DOM 내 큰 이미지를 2열 그리드로 재배치, 작은 배너/광고 이미지는 제외) ----
+    private fun applyBtnAlpha() { findViewById<View>(R.id.btnBox).alpha = btnAlpha / 100f }
     private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
     private fun applyTwo(v: Boolean) {
         val was = two; two = v; updateTwoBtn()
@@ -209,6 +211,7 @@ class MainActivity : Activity() {
         sw("오른쪽→왼쪽 (만화책 방식)", rtl) { rtl = it; needInject = true }
         bar("두쪽 중간 여백 ", 60, gap, { "${it}px" }) { gap = it; needInject = true }
         sw("광고 도메인 차단", adblock) { adblock = it }
+        bar("우측 버튼 투명도(불투명도) ", 80, btnAlpha - 20, { "${it + 20}%" }) { btnAlpha = it + 20; applyBtnAlpha() }
         box.addView(TextView(this).apply { text = "\n[▲▼ 버튼 / 볼륨키]"; setTypeface(null, android.graphics.Typeface.BOLD) })
         bar("1회 이동 거리(화면 높이 대비) ", 90, pageRatio - 10, { "${it + 10}%" }) { pageRatio = it + 10 }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 20, smoothMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { smoothMs = it * 100 }
