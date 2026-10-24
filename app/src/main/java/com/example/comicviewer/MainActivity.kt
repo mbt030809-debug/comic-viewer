@@ -472,7 +472,7 @@ class MainActivity : Activity() {
             }
         })
         val sv = ScrollView(this).apply { addView(box) }
-        val dlg = AlertDialog.Builder(this).setTitle("설정").setView(sv).setPositiveButton("확인") { _, _ ->
+        val dlg = AlertDialog.Builder(this).setTitle("설정 (v" + packageManager.getPackageInfo(packageName, 0).versionName + ")").setView(sv).setPositiveButton("확인") { _, _ ->
             updateTwoBtn()
             if (needReload) web.reload() else if (needInject) injectScript()
         }.create()
