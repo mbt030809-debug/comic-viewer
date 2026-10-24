@@ -28,7 +28,7 @@ class MainActivity : Activity() {
 
     private var two get() = prefs.getBoolean("two", false); set(v) = prefs.edit().putBoolean("two", v).apply()
     private var rtl get() = prefs.getBoolean("rtl", false); set(v) = prefs.edit().putBoolean("rtl", v).apply()
-    private var cover get() = prefs.getBoolean("cover", false); set(v) = prefs.edit().putBoolean("cover", v).apply()
+    private var gap get() = prefs.getInt("gap", 8); set(v) = prefs.edit().putInt("gap", v).apply() // 두쪽 중간 여백(px)
     private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply() // px/sec
@@ -78,6 +78,7 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.goBtn).setOnClickListener { go(urlInput.text.toString()) }
         urlInput.setOnEditorActionListener { _, a, _ -> if (a == EditorInfo.IME_ACTION_GO) { go(urlInput.text.toString()); true } else false }
         findViewById<View>(R.id.backBtn).setOnClickListener { if (web.canGoBack()) web.goBack() }
+        findViewById<View>(R.id.bookmarkBtn).setOnClickListener { showBookmarks() }
         findViewById<View>(R.id.settingsBtn).setOnClickListener { showSettings() }
         findViewById<View>(R.id.menuBtn).setOnClickListener { topBar.visibility = if (topBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
         twoBtn.setOnClickListener { applyTwo(!two) }
@@ -114,12 +115,12 @@ class MainActivity : Activity() {
     }
 
     private fun injectScript() {
-        web.evaluateJavascript(SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__COVER__", "$cover"), null)
+        web.evaluateJavascript(SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__GAP__", "$gap"), null)
     }
 
     // ---- 스크롤 ----
     private fun pageScroll(dir: Int) {
-        val dist = (web.height * 0.95f).toInt() * dir
+        val dist = (web.height * (if (two) 1.0f else 0.95f)).toInt() * dir
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
@@ -154,6 +155,38 @@ class MainActivity : Activity() {
         else Choreographer.getInstance().removeFrameCallback(frame)
     }
 
+    // ---- 북마크 (SharedPreferences에 JSON 저장) ----
+    private fun loadBookmarks(): MutableList<Pair<String, String>> {
+        val a = org.json.JSONArray(prefs.getString("bookmarks", "[]"))
+        return MutableList(a.length()) { a.getJSONObject(it).let { o -> o.getString("t") to o.getString("u") } }
+    }
+    private fun saveBookmarks(l: List<Pair<String, String>>) {
+        val a = org.json.JSONArray()
+        l.forEach { a.put(org.json.JSONObject().put("t", it.first).put("u", it.second)) }
+        prefs.edit().putString("bookmarks", a.toString()).apply()
+    }
+    private fun showBookmarks() {
+        val list = loadBookmarks()
+        val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, list.map { it.first }.toMutableList())
+        val dlg = AlertDialog.Builder(this).setTitle("북마크 (길게 눌러 삭제)")
+            .setAdapter(ad) { _, i -> go(list[i].second) }
+            .setPositiveButton("현재 페이지 추가") { _, _ ->
+                val u = web.url ?: return@setPositiveButton
+                if (list.none { it.second == u }) {
+                    list.add((web.title?.takeIf { it.isNotBlank() } ?: u) to u); saveBookmarks(list)
+                    Toast.makeText(this, "북마크 추가", Toast.LENGTH_SHORT).show()
+                } else Toast.makeText(this, "이미 있음", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("닫기", null).create()
+        dlg.show()
+        dlg.listView.setOnItemLongClickListener { _, _, i, _ ->
+            AlertDialog.Builder(this).setMessage("삭제: ${list[i].first}").setPositiveButton("삭제") { _, _ ->
+                list.removeAt(i); saveBookmarks(list); ad.remove(ad.getItem(i)); ad.notifyDataSetChanged()
+            }.setNegativeButton("취소", null).show()
+            true
+        }
+    }
+
     private fun showSettings() {
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
@@ -173,7 +206,7 @@ class MainActivity : Activity() {
         }
         sw("두쪽 보기", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
         sw("오른쪽→왼쪽 (만화책 방식)", rtl) { rtl = it; needInject = true }
-        sw("첫 장 단독(표지)", cover) { cover = it; needReload = true }
+        bar("두쪽 중간 여백 ", 60, gap, { "${it}px" }) { gap = it; needInject = true }
         sw("광고 도메인 차단", adblock) { adblock = it }
         bar("페이지 스크롤 부드러움 ", 20, smoothMs / 100, { if (it == 0) "즉시" else "${it * 100}ms" }) { smoothMs = it * 100 }
         bar("자동 스크롤 속도 ", 58, (autoSpeed - 20) / 10, { "${20 + it * 10}px/s" }) { autoSpeed = 20 + it * 10 }
@@ -184,40 +217,52 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        // 두쪽 보기: 연속 세로 스트립을 좌/우 두 패널로 표시. 왼쪽=현재 위치, 오른쪽=한 화면 아래.
+        // 문서 스크롤(native)을 그대로 쓰고 스크롤 값에 맞춰 두 스트립을 translate → 한 페이지 스크롤 시 오른쪽 내용이 왼쪽으로 이동
         private const val SCRIPT = """(function(){
-window.__cvOpts={two:__TWO__,rtl:__RTL__,cover:__COVER__};
-if(window.__cvTimer)return;
-var cnt=0;
+var o=window.__cvOpts={two:__TWO__,rtl:__RTL__,gap:__GAP__};
+if(window.__cvTimer){window.__cvTick();return}
+var cnt=0,root=null,strips=[],spacer=null;
 function big(i){var w=i.naturalWidth,h=i.naturalHeight;
  if(!w||!h||w<400||h<300||w/h>3)return false;
- return i.getBoundingClientRect().width>=window.innerWidth*0.4;}
+ var r=i.getBoundingClientRect();
+ return r.width==0||r.width>=window.innerWidth*0.4;}
+function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
+function build(){
+ var st=mk('style','cv-style');
+ st.textContent='body>*:not(#cv-root):not(#cv-spacer){display:none!important}html,body{margin:0!important;padding:0!important;background:#111!important}#cv-root{position:fixed;left:0;top:0;width:100%;height:100vh;z-index:2147483647;display:flex;background:#111;overflow:hidden;pointer-events:none}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
+ document.head.appendChild(st);
+ root=mk('div','cv-root');
+ for(var k=0;k<2;k++){var p=mk('div',null,'cv-pane'),s=mk('div',null,'cv-strip');p.appendChild(s);root.appendChild(p);strips.push(s);}
+ spacer=mk('div','cv-spacer');
+ document.body.appendChild(root);document.body.appendChild(spacer);
+}
+function add(i){var src=i.currentSrc||i.src;
+ strips.forEach(function(s){var a=new Image();a.src=src;a.__cvi=i.__cvi;
+  var ref=null,k=s.children;for(var n=0;n<k.length;n++){if(k[n].__cvi>a.__cvi){ref=k[n];break}}
+  s.insertBefore(a,ref);});}
+function upd(){if(!root)return;
+ var H=window.innerHeight,y=window.scrollY;
+ root.style.flexDirection=o.rtl?'row-reverse':'row';root.style.gap=o.gap+'px';
+ strips[0].style.transform='translate3d(0,'+(-y)+'px,0)';
+ strips[1].style.transform='translate3d(0,'+(-(y+H))+'px,0)';
+ spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';}
 function tick(){
- var o=window.__cvOpts,imgs=[].slice.call(document.images);
+ var imgs=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
  imgs.forEach(function(i){
   if(i.__cvi===undefined)i.__cvi=cnt++;
   var d=i.getAttribute('data-src')||i.getAttribute('data-original')||i.getAttribute('data-lazy-src');
-  if(d&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&&i.getBoundingClientRect().top<window.innerHeight*3){
+  if(d&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&&(o.two||i.getBoundingClientRect().top<window.innerHeight*3)){
    i.__cvl=1;i.loading='eager';i.src=d;}
+  else if(o.two&&i.loading=='lazy')i.loading='eager';
  });
  if(!o.two)return;
- var c=imgs.filter(function(i){return !i.closest('#cv-grid')&&big(i)});
- var g=document.getElementById('cv-grid');
- if(!g&&!c.length)return;
- if(!g){g=document.createElement('div');g.id='cv-grid';
-  g.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:0;width:100%;align-items:start';
-  c[0].parentNode.insertBefore(g,c[0]);}
- g.style.direction=o.rtl?'rtl':'ltr';
- c.forEach(function(i){
-  var ref=null,k=g.children;
-  for(var n=0;n<k.length;n++){if(k[n].__cvi>i.__cvi){ref=k[n];break}}
-  g.insertBefore(i,ref);
-  i.style.cssText='width:100%;height:auto;max-width:none;display:block;margin:0';});
- for(var n=0;n<g.children.length;n++){var e=g.children[n];
-  var wide=e.naturalWidth>e.naturalHeight*1.1,cv=(n==0&&o.cover);
-  e.style.gridColumn=(wide||cv)?'1 / 3':'auto';
-  e.style.width=(cv&&!wide)?'50%':'100%';e.style.margin=(cv&&!wide)?'0 auto':'0';}
-}
-window.__cvTimer=setInterval(tick,800);tick();
+ if(!root)build();
+ imgs.forEach(function(i){if(i.__cva||!big(i))return;i.__cva=1;add(i);});
+ upd();}
+window.__cvTick=tick;
+window.addEventListener('scroll',upd,{passive:true});window.addEventListener('resize',upd);
+window.__cvTimer=setInterval(tick,500);tick();
 })()"""
     }
 }
