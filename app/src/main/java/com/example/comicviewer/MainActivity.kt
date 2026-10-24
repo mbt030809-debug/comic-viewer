@@ -34,7 +34,8 @@ class MainActivity : Activity() {
     private lateinit var thumb: View
     private val handler = Handler(Looper.getMainLooper())
     private val density get() = resources.displayMetrics.density
-    private val expanded get() = resources.configuration.screenWidthDp >= 600 // 폴드 펼침(태블릿 폭)
+    private var rootW = 0 // 실제 레이아웃 너비(px). 접힘/펼침 전환 시 설정값이 늦게 갱신되는 문제를 피하려고 이것을 기준으로 판단
+    private val expanded get() = (if (rootW > 0) rootW / density else resources.configuration.screenWidthDp.toFloat()) >= 600f // 폴드 펼침(태블릿 폭)
 
     // ---- 설정 ----
     private var two get() = prefs.getBoolean("two", false); set(v) = prefs.edit().putBoolean("two", v).apply()
@@ -128,7 +129,11 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.upBtn).setOnClickListener { pageScroll(-1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
         updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons()
-        if (foldAutoTwo && expanded) { two = true; updateTwoBtn() }
+        if (foldAutoTwo) { two = expanded; updateTwoBtn() }
+        findViewById<View>(R.id.root).addOnLayoutChangeListener { _, l, _, r, _, ol, _, orr, _ ->
+            val w = r - l
+            if (w > 0 && w != orr - ol) { val first = rootW == 0; rootW = w; if (!first) onWidthChanged() else { applyScale(); if (foldAutoTwo && two != expanded) { two = expanded; updateTwoBtn() } } }
+        }
 
         window.decorView.post { setFull(true) } // 기본: 메뉴 숨김
 
@@ -137,9 +142,17 @@ class MainActivity : Activity() {
     }
 
     override fun onConfigurationChanged(c: Configuration) {
-        super.onConfigurationChanged(c)
-        if (foldAutoTwo) { val was = two; two = expanded; updateTwoBtn(); if (was && !two) { web.reload(); return } }
-        applyScale(); injectScript()
+        super.onConfigurationChanged(c) // 실제 처리는 루트 레이아웃 너비 변경 리스너(onWidthChanged)에서
+    }
+
+    /** 접힘↔펼침 등으로 창 너비가 바뀐 뒤(레이아웃 완료 후) 호출 */
+    private fun onWidthChanged() {
+        applyScale()
+        if (foldAutoTwo) {
+            val want = expanded
+            if (want != two) { two = want; updateTwoBtn(); if (!want) { web.reload(); return } }
+        }
+        injectScript()
     }
 
     override fun onDestroy() { applyAuto(false); web.destroy(); super.onDestroy() }
@@ -234,7 +247,8 @@ class MainActivity : Activity() {
 
     /** 이미지 너비: 웹뷰 좌우에 검정 여백을 주어 페이지를 좁게(작게) 표시 */
     private fun applyScale() {
-        val m = (resources.displayMetrics.widthPixels * (100 - imgScale) / 200f).toInt()
+        val rw = if (rootW > 0) rootW else resources.displayMetrics.widthPixels
+        val m = (rw * (100 - imgScale) / 200f).toInt()
         val lp = web.layoutParams as FrameLayout.LayoutParams
         if (lp.leftMargin != m || lp.rightMargin != m) { lp.leftMargin = m; lp.rightMargin = m; web.layoutParams = lp }
     }
