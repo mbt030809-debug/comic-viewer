@@ -68,6 +68,9 @@ class MainActivity : Activity() {
     private var pageAnim: ValueAnimator? = null
     private var auto = false
     private var resumeAuto = false
+    private val clearResume = Runnable { resumeAuto = false }
+    /** 다음화 이동 후 자동 스크롤을 이어갈 예약. 페이지 로드가 없으면 10초 뒤 자동 해제 */
+    private fun armResume() { resumeAuto = true; handler2.removeCallbacks(clearResume); handler2.postDelayed(clearResume, 10000) }
 
     private val adHosts = listOf(
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google",
@@ -116,7 +119,7 @@ class MainActivity : Activity() {
                 handler.postDelayed({ checkTitle() }, 300)
                 handler.postDelayed({ checkTitle() }, 2500)
                 if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) }
-                else if (auto && autoPageMode) handler.postDelayed(pageAutoRun, 1500) // 페이지 이동으로 지워진 방식2 예약 복구
+                else if (auto && autoPageMode) { handler.removeCallbacks(pageAutoRun); handler.postDelayed(pageAutoRun, 1500) } // 페이지 이동으로 지워진 방식2 예약 복구
             }
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 if (adblock) {
@@ -132,7 +135,7 @@ class MainActivity : Activity() {
         }
         web.setOnTouchListener { _, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { touching = true; if (auto) applyAuto(false) }
+                MotionEvent.ACTION_DOWN -> { touching = true; resumeAuto = false; pageAnim?.cancel(); if (auto) applyAuto(false) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { touching = false; touchEndAt = System.currentTimeMillis() }
             }
             false
@@ -179,7 +182,7 @@ class MainActivity : Activity() {
         injectScript()
     }
 
-    override fun onDestroy() { applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
+    override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
     override fun onPause() { applyAuto(false); stopHold(); savePosNow(); super.onPause() }
     @Deprecated("") override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -189,6 +192,7 @@ class MainActivity : Activity() {
     }
 
     private fun go(raw: String) {
+        resumeAuto = false
         var u = raw.trim(); if (u.isEmpty()) return
         if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
@@ -249,7 +253,10 @@ class MainActivity : Activity() {
     @SuppressLint("ClickableViewAccessibility")
     private fun initDraggableButtons() {
         val layer = findViewById<View>(R.id.btnLayer)
-        layer.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, orr, ob -> if (r - l != orr - ol || b - t != ob - ot) placeBtns() }
+        layer.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, orr, ob ->
+            if (r - l != orr - ol) placeBtns() // 폭이 바뀔 때(접힘/펼침·회전)만 저장된 비율로 재배치
+            else if (b - t != ob - ot) floatBtns().forEach { v -> v.y = v.y.coerceIn(0f, ((b - t) - v.height).toFloat().coerceAtLeast(0f)) } // 시스템바 토글 등은 위치 유지
+        }
         layer.post { placeBtns() }
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         floatBtns().forEach { v ->
@@ -345,11 +352,11 @@ class MainActivity : Activity() {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
         // 메뉴 표시/숨김 애니메이션(300ms, One UI 유사 곡선): 메뉴가 나오면 웹페이지가 아래로 밀리고, 숨기면 위로 올라옴
-        if (topBar.height == 0) {
+        run { // 숨김(GONE) 상태의 이전 높이가 낡았을 수 있어 항상 다시 측정
             topBar.measure(View.MeasureSpec.makeMeasureSpec(if (rootW > 0) rootW else resources.displayMetrics.widthPixels, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
         }
-        val h = (if (topBar.height > 0) topBar.height else topBar.measuredHeight).coerceAtLeast(1)
+        val h = topBar.measuredHeight.coerceAtLeast(1)
         val lp = web.layoutParams as FrameLayout.LayoutParams
         val from = lp.topMargin; val to = if (v) 0 else h
         menuAnim?.cancel()
@@ -426,7 +433,7 @@ class MainActivity : Activity() {
         }
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
-            if (b && auto && autoNext) { applyAuto(false); resumeAuto = true; handler.postDelayed({ goNext() }, 1200) } }
+            if (b && auto && autoNext) { applyAuto(false); armResume(); handler.postDelayed({ goNext() }, 1200) } }
         if (saving && curKey != null) { handler.removeCallbacks(saveRun); handler.postDelayed(saveRun, 800) }
     }
 
@@ -442,9 +449,11 @@ class MainActivity : Activity() {
     private fun pageScroll(dir: Int) {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
-        val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
+        // 메뉴가 숨겨지는 이동이면 애니메이션이 끝난 뒤의 높이(=현재 높이+메뉴 여백)를 기준으로 거리·경계 계산
+        val finalH = web.height + (if (dir > 0 && !editMode) (web.layoutParams as FrameLayout.LayoutParams).topMargin else 0)
+        val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); return }
-        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist) ?: dist) }
+        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist, finalH) ?: dist) }
     }
 
     private fun animateScroll(dist: Int) {
@@ -470,7 +479,9 @@ class MainActivity : Activity() {
     private fun showRegionEditor() {
         val root = findViewById<FrameLayout>(R.id.root)
         val lpw = web.layoutParams as FrameLayout.LayoutParams
-        val webL = lpw.leftMargin.toFloat(); val webW = web.width.toFloat()
+        val webL = lpw.leftMargin.toFloat(); val fullW = web.width.toFloat()
+        // 두쪽 보기에서는 이미지 폭 = 한 칸 폭이므로 왼쪽 칸 기준 %로 저장
+        val webW = if (two) (fullW - gap * density) / 2f else fullW
         val scrim = FrameLayout(this).apply { setBackgroundColor(0x66000000); isClickable = true; elevation = 30f }
         val rect = FrameLayout(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply { setColor(0x44FF0000); setStroke((3 * density).toInt(), 0xFFFF3333.toInt()) }
@@ -510,7 +521,7 @@ class MainActivity : Activity() {
             }
         }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(0xEE222222.toInt()) }
-        val info = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); setPadding(24, 0, 24, 0); text = "사각형을 끌어 이동 / 모서리 원으로 크기 조절"; gravity = Gravity.CENTER_VERTICAL }
+        val info = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); setPadding(24, 0, 24, 0); text = if (two) "왼쪽 칸 기준으로 지정: 끌어 이동 / 모서리로 크기" else "사각형을 끌어 이동 / 모서리 원으로 크기 조절"; gravity = Gravity.CENTER_VERTICAL }
         bar.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         bar.addView(Button(this).apply { text = "적용"; setOnClickListener {
             blackL = ((rl - webL) / webW * 100f).toInt().coerceIn(0, 90)
@@ -527,6 +538,7 @@ class MainActivity : Activity() {
 
     // ---- 검은 경계 멈춤: 이미지를 미리 내려받아 분석한 검은 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
     private val analyzer = BandAnalyzer()
+    private val rescan = Runnable { analyzer.clear(); scheduleAnalysis() } // 슬라이더 조작 중 연속 재분석 방지(디바운스)
     private var analyzeTick = 0
     private class Img(val src: String, val t: Float, val h: Float)
 
@@ -561,19 +573,20 @@ class MainActivity : Activity() {
     }
 
     /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
-    private fun computeSnap(r: String?, dist: Int): Int? {
+    private fun computeSnap(r: String?, dist: Int, viewH: Int): Int? {
         val (dark, imgs) = parseImgs(r) ?: return null
         val bands = bandsOf(dark, imgs)
-        val cur = web.scrollY / density; val hCss = web.height / density
+        val cur = web.scrollY / density; val hCss = viewH / density
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density
-        return if (dist > 0) {
+        val res = if (dist > 0) {
             val b = bands.filter { it[0] >= cur + visH + (ignorePct / 100f) * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
             ((b[0] - visH - cur) * density).toInt()
         } else {
             val b = bands.filter { it[1] <= cur - (ignorePct / 100f) * d && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
             -((cur - b[1]) * density).toInt()
         }
+        return if (abs(res) < 4) null else res // 이동량이 거의 0이면(멈춤 위치에 이미 있음) 일반 이동
     }
 
     private val frame = object : Choreographer.FrameCallback {
@@ -596,7 +609,7 @@ class MainActivity : Activity() {
             if (!auto) return
             if (atBottom()) {
                 applyAuto(false)
-                if (autoNext) { resumeAuto = true; goNext() }
+                if (autoNext) { armResume(); goNext() }
                 return
             }
             pageScroll(1)
@@ -629,7 +642,7 @@ class MainActivity : Activity() {
             ?: Regex("(?i)(?:ep\\.?|episode|chapter|ch\\.?)\\s*(\\d+)").find(t) ?: return null
         val ep = m.groupValues[1].toIntOrNull() ?: return null
         val sep = Regex("\\s[-|·–:]\\s")
-        var before = t.substring(0, m.range.first).trim().trimEnd('제', ' ', '-', '|', ':', '·', '–')
+        var before = t.substring(0, m.range.first).trim().trimEnd(' ', '-', '|', ':', '·', '–').replace(Regex("\\s제$"), "").trim()
         before = before.split(sep).lastOrNull()?.trim() ?: ""
         var name = before
         if (name.isEmpty()) name = t.substring(m.range.last + 1).trim(' ', '-', '|', ':', '·', '–').split(sep).firstOrNull()?.trim() ?: ""
@@ -668,38 +681,46 @@ class MainActivity : Activity() {
         restorePos(key)
     }
 
-    private class Pos(val key: String, val y: Int, val ratio: Float, val exp: Boolean)
+    private class Pos(val key: String, val y: Int, val ratio: Float, val exp: Boolean, val two: Boolean = false, val sc: Int = 100)
     private fun loadPos(): MutableList<Pos> {
         val a = JSONArray(prefs.getString("pos", "[]"))
-        return MutableList(a.length()) { val o = a.getJSONObject(it); Pos(o.getString("k"), o.getInt("y"), o.getDouble("r").toFloat(), o.getBoolean("e")) }
+        return MutableList(a.length()) { val o = a.getJSONObject(it); Pos(o.getString("k"), o.getInt("y"), o.getDouble("r").toFloat(), o.getBoolean("e"), o.optBoolean("t", false), o.optInt("s", 100)) }
     }
     private fun savePosNow() {
         val k = curKey ?: return
         if (!saving || web.scrollY <= 0) return
         val l = loadPos(); l.removeAll { it.key == k }
         val h = (web.contentHeight * density).coerceAtLeast(1f)
-        l.add(Pos(k, web.scrollY, web.scrollY / h, expanded))
+        l.add(Pos(k, web.scrollY, web.scrollY / h, expanded, two, imgScale))
         while (l.size > 300) l.removeAt(0)
-        val a = JSONArray(); l.forEach { a.put(JSONObject().put("k", it.key).put("y", it.y).put("r", it.ratio.toDouble()).put("e", it.exp)) }
+        val a = JSONArray(); l.forEach { a.put(JSONObject().put("k", it.key).put("y", it.y).put("r", it.ratio.toDouble()).put("e", it.exp).put("t", it.two).put("s", it.sc)) }
         prefs.edit().putString("pos", a.toString()).apply()
     }
     private fun restorePos(key: String) {
         val p = loadPos().firstOrNull { it.key == key }
         if (p == null || p.y < 50) { saving = true; return }
         var tries = 0; var lastH = -1; var stable = 0
+        val sameLayout = p.exp == expanded && p.two == two && p.sc == imgScale // 레이아웃이 같을 때만 픽셀 위치, 다르면 비율로 복원
         val r = object : Runnable {
-            override fun run() {
-                if (curKey != key) return
+            fun step() {
                 val h = (web.contentHeight * density).toInt()
                 stable = if (h == lastH) stable + 1 else 0; lastH = h
-                val target = if (p.exp == expanded) p.y else (p.ratio * h).toInt()
-                val ready = h >= target + web.height * 0.5 && (p.exp == expanded || stable >= 3)
+                val target = if (sameLayout) p.y else (p.ratio * h).toInt()
+                val ready = h >= target + web.height * 0.5 && (sameLayout || stable >= 3)
                 if (ready || ++tries > 30) {
                     if (ready) web.scrollTo(0, target)
                     saving = true
                     return
                 }
                 handler.postDelayed(this, 400)
+            }
+            override fun run() {
+                if (curKey != key) return
+                if (two) { // 두쪽 보기는 스크립트가 위치 앵커 복원을 마친 뒤(__cvReady)에 복원해야 덮어써지지 않음
+                    web.evaluateJavascript("(window.__cvReady?1:0)") { v ->
+                        if (curKey == key) { if (v?.trim() == "1" || tries > 25) step() else { tries++; handler.postDelayed(this, 400) } }
+                    }
+                } else step()
             }
         }
         handler.postDelayed(r, 400)
@@ -755,7 +776,7 @@ class MainActivity : Activity() {
         dlg.show()
         dlg.listView.setOnItemLongClickListener { _, _, i, _ ->
             AlertDialog.Builder(this).setMessage("삭제: ${list[i].first}").setPositiveButton("삭제") { _, _ ->
-                list.removeAt(i); saveBookmarks(list); ad.remove(ad.getItem(i)); ad.notifyDataSetChanged()
+                list.removeAt(i); saveBookmarks(list); ad.clear(); ad.addAll(list.map { it.first }); ad.notifyDataSetChanged()
             }.setNegativeButton("취소", null).show()
             true
         }
@@ -800,7 +821,7 @@ class MainActivity : Activity() {
             text = "검정 판정 영역 지정 (사각형을 끌어서 조절 - 워터마크는 영역 밖으로)"
             setOnClickListener { settingsDlg?.dismiss(); showRegionEditor() }
         })
-        bar("검정으로 볼 밝기 기준(클수록 어두운 회색도 검정 취급) ", 5, 120, blackLevel, { "$it" }) { blackLevel = it; analyzer.clear(); scheduleAnalysis() }
+        bar("검정으로 볼 밝기 기준(클수록 어두운 회색도 검정 취급) ", 5, 120, blackLevel, { "$it" }) { blackLevel = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
         box.addView(Button(this).apply {
             text = "분석 상태 확인"
             setOnClickListener {
@@ -852,10 +873,11 @@ class MainActivity : Activity() {
             }
         })
         val sv = ScrollView(this).apply { addView(box) }
-        val dlg = AlertDialog.Builder(this).setTitle("설정 (v" + packageManager.getPackageInfo(packageName, 0).versionName + ")").setView(sv).setPositiveButton("확인") { _, _ ->
+        val dlg = AlertDialog.Builder(this).setTitle("설정 (v" + packageManager.getPackageInfo(packageName, 0).versionName + ")").setView(sv).setPositiveButton("확인", null).create()
+        dlg.setOnDismissListener { // 확인/바깥 터치/뒤로가기/다른 편집기로 전환 등 어떤 경로로 닫아도 변경 사항 적용
             updateTwoBtn()
             if (needReload) web.reload() else if (needInject) injectScript()
-        }.create()
+        }
         (box.getChildAt(box.childCount - 1) as Button).tag = dlg
         settingsDlg = dlg
         dlg.show()
@@ -880,12 +902,13 @@ function takeAnchor(bigs){anchorTaken=1;
   if(r.bottom>1&&r.height>0){anchor={cvi:bigs[n].__cvi,frac:r.top<0?(-r.top/r.height):0};return}}
  var h=document.documentElement.scrollHeight;if(h>0)anchor={ratio:window.scrollY/h}}
 function restoreAnchor(){
+ if(root&&(!anchor||anchorDone)){window.__cvReady=1;return}
  if(!anchor||anchorDone||!root)return;anchorTries++;var y=null;
  if(anchor.cvi!==undefined){var cl=null,ready=true,k=strips[0].children;
   for(var n=0;n<k.length;n++){if(!k[n].complete||!k[n].naturalHeight)ready=false;if(k[n].__cvi===anchor.cvi){cl=k[n];break}}
   if(cl&&ready)y=cl.offsetTop+anchor.frac*cl.offsetHeight;}
  else if(strips[0].offsetHeight>window.innerHeight)y=anchor.ratio*strips[0].offsetHeight;
- if(y!==null||anchorTries>40){if(y!==null){window.scrollTo(0,y);upd()}anchorDone=1}}
+ if(y!==null||anchorTries>40){if(y!==null){window.scrollTo(0,y);upd()}anchorDone=1;window.__cvReady=1}}
 function lazySrc(i){var n=['data-src','data-original','data-lazy-src','data-lazy','data-url','data-origin','data-echo','lazy-src','data-actualsrc'];
  for(var k=0;k<n.length;k++){var v=i.getAttribute(n[k]);if(v&&/^(https?:)?\/\/|^\/|\.(jpe?g|png|webp|gif)/i.test(v))return v}
  return null}
@@ -897,7 +920,8 @@ function sweep(){swept=1;var st=box('cv-diag','bottom:0;background:#c00');st.tex
   else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},800)})();}
 function collapse(e){e.style.display='none';var p=e.parentElement;
  while(p&&p!==document.body&&p!==document.documentElement&&!p.closest('.cv-keep')){
-  var vis=[].some.call(p.children,function(c){return c.style.display!=='none'&&c.offsetHeight>0&&getComputedStyle(c).display!=='none'});
+  var vis=[].some.call(p.children,function(c){if(c===e||c.style.display==='none'||getComputedStyle(c).display==='none')return false;
+   return c.offsetHeight>0||/^(IMG|IFRAME|CANVAS|VIDEO)$/.test(c.tagName)||!!c.querySelector('img,iframe,canvas,video')});
   var txt=[].some.call(p.childNodes,function(n){return n.nodeType==3&&n.textContent.trim()});
   if(vis||txt)break;p.style.display='none';p=p.parentElement}}
 function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
@@ -944,6 +968,7 @@ function tick0(){
   if(i.__cvhid){i.style.display='';i.__cvhid=0}
  });
  if(!o.two)return;
+ if(root){var live={};imgs.forEach(function(i){live[i.__cvi]=1});strips.forEach(function(s){[].slice.call(s.children).forEach(function(c){if(!live[c.__cvi])c.remove()})})}
  if(!anchorTaken&&!root)takeAnchor(bigs);
  if(!root){if(swept==0&&(bigs.length<4||needSweep(imgs))){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
