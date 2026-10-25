@@ -33,15 +33,15 @@ class BandAnalyzer {
         val k = key(url, tol, left, width)
         if (cache.containsKey(k)) return
         failures[k]?.let { if (it[0] >= 3 || System.currentTimeMillis() - it[1] < 30_000) return } // 일시적 실패는 30초 뒤 최대 3회까지 재시도
-        if (!pending.add(k)) return
-        pool.execute {
+        if (pool.isShutdown || !pending.add(k)) return
+        try { pool.execute {
             try {
                 cache[k] = bands(bitmapFor(url, referer), tol, left, width)
                 failures.remove(k)
             } catch (_: Throwable) {
                 val f = failures.getOrPut(k) { longArrayOf(0, 0) }; f[0]++; f[1] = System.currentTimeMillis()
             } finally { pending.remove(k) }
-        }
+        } } catch (_: java.util.concurrent.RejectedExecutionException) { pending.remove(k) }
     }
 
     /** 결과만 비움(내려받은 비트맵은 유지) */

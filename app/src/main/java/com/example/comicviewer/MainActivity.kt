@@ -482,8 +482,9 @@ class MainActivity : Activity() {
         val webL = lpw.leftMargin.toFloat(); val fullW = web.width.toFloat()
         // 두쪽 보기에서는 이미지 폭 = 한 칸 폭이므로 왼쪽 칸 기준 %로 저장
         val webW = if (two) (fullW - gap * density) / 2f else fullW
-        val scrim = FrameLayout(this).apply { setBackgroundColor(0x66000000); isClickable = true; elevation = 30f }
+        val scrim = FrameLayout(this).apply { setBackgroundColor(0x66000000); isClickable = true; elevation = 30f; clipChildren = false }
         val rect = FrameLayout(this).apply {
+            clipChildren = false // 모서리 핸들이 사각형 밖으로 나가도 터치 가능
             background = android.graphics.drawable.GradientDrawable().apply { setColor(0x44FF0000); setStroke((3 * density).toInt(), 0xFFFF3333.toInt()) }
         }
         val minPx = 20 * density
@@ -516,8 +517,9 @@ class MainActivity : Activity() {
             lp.leftMargin = -hs / 3; lp.rightMargin = -hs / 3; lp.topMargin = -hs / 3; lp.bottomMargin = -hs / 3
             rect.addView(h, lp)
             drag(h) { dx, dy, l, t, w, hh ->
-                if (c[1] == 'e') rw = w + dx else { rl = l + dx; rw = w - dx }
-                if (c[0] == 's') rh = hh + dy else { rt = t + dy; rh = hh - dy }
+                // 서쪽/북쪽 핸들은 반대편 변을 고정하고 이 변만 이동(최소 크기·경계 안에서)
+                if (c[1] == 'e') rw = w + dx else { val r = l + w; rl = (l + dx).coerceIn(webL, r - minPx); rw = r - rl }
+                if (c[0] == 's') rh = hh + dy else { val b = t + hh; rt = (t + dy).coerceIn(0f, b - minPx); rh = b - rt }
             }
         }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(0xEE222222.toInt()) }
@@ -558,18 +560,25 @@ class MainActivity : Activity() {
 
     /** css px 단위의 검은 띠 목록(top, bottom)을 합쳐서 반환. 이미지 내부의 검은 행 + 어두운 배경일 때 이미지 사이 빈틈 */
     private fun bandsOf(dark: Boolean, imgs: List<Img>): List<FloatArray> {
+        // raw: [top, bottom, 필요한 최소 높이]. 이미지 가장자리에 닿은 띠/이미지 사이 빈틈은 blackH, 이미지 안쪽 단색 구간(하늘·말풍선 등)은 더 크게 요구
         val raw = ArrayList<FloatArray>()
+        var maxBottom = Float.NEGATIVE_INFINITY
         imgs.forEachIndexed { i, im ->
-            analyzer.cached(im.src, colorTol, blackL, blackW)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
-            if (i + 1 < imgs.size) { val b = im.t + im.h; val n = imgs[i + 1].t; if (n - b > 0f) raw.add(floatArrayOf(b, n)) } // 이미지 사이 빈 영역(배경색이 검정/흰색 등 무엇이든)
+            analyzer.cached(im.src, colorTol, blackL, blackW)?.forEach {
+                val edge = it[0] <= 0.003f || it[1] >= 0.997f
+                val req = if (edge) blackH.toFloat() else maxOf(2f * blackH, 0.15f * im.h)
+                raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h, req))
+            }
+            if (i > 0 && im.t - maxBottom > 0f) raw.add(floatArrayOf(maxBottom, im.t, blackH.toFloat())) // 이미지 사이 빈 영역(배경색 무관). 겹치는 이미지는 최대 하단 기준
+            maxBottom = maxOf(maxBottom, im.t + im.h)
         }
         raw.sortBy { it[0] }
         val merged = ArrayList<FloatArray>()
         for (b in raw) {
             val last = merged.lastOrNull()
-            if (last != null && b[0] - last[1] <= 3f) last[1] = maxOf(last[1], b[1]) else merged.add(floatArrayOf(b[0], b[1]))
+            if (last != null && b[0] - last[1] <= 3f) { last[1] = maxOf(last[1], b[1]); last[2] = minOf(last[2], b[2]) } else merged.add(floatArrayOf(b[0], b[1], b[2]))
         }
-        return merged.filter { it[1] - it[0] >= blackH }
+        return merged.filter { it[1] - it[0] >= it[2] }
     }
 
     /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
