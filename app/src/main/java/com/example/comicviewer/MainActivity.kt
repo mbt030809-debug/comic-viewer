@@ -443,41 +443,45 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 이동 방향 쪽 화면 가장자리 띠(높이 blackH dp)의 비검정 픽셀 비율을 비동기로 샘플링.
+     * 화면 가장자리(top=true: 위, false: 아래)에서부터 연속으로 검은 영역이 몇 px 보이는지 비동기 측정.
      * PixelCopy(API 26+)로 실제 화면 픽셀을 읽어 WebView 하드웨어 렌더링에서도 정확하고 메인 스레드를 막지 않음.
      */
     private var sampleBmp: Bitmap? = null
     private var sampling = false
-    private fun sampleStrip(top: Boolean, cb: (Float) -> Unit) {
+    private val sampleScale = 0.25f
+    private fun sampleEdgeBlack(top: Boolean, cb: (Int) -> Unit) {
         val w = web.width; val h = web.height
         if (w <= 0 || h <= 0 || sampling) return
-        val scale = 0.2f
-        val sh = (blackH * density).toInt().coerceIn(8, h)
-        val bw = (w * scale).toInt().coerceAtLeast(8); val bh = (sh * scale).toInt().coerceAtLeast(2)
+        val bw = (w * sampleScale).toInt().coerceAtLeast(8); val bh = (h * sampleScale).toInt().coerceAtLeast(8)
         var bmp = sampleBmp
         if (bmp == null || bmp.width != bw || bmp.height != bh) { bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); sampleBmp = bmp }
         val out = bmp!!
         fun analyze() {
             val px = IntArray(bw * bh); out.getPixels(px, 0, bw, 0, 0, bw, bh)
-            var non = 0
-            for (p in px) if (((p shr 16) and 255) >= 30 || ((p shr 8) and 255) >= 30 || (p and 255) >= 30) non++
+            var rows = 0
+            for (i in 0 until bh) {
+                val r = if (top) i else bh - 1 - i
+                var non = 0
+                for (x in 0 until bw) { val p = px[r * bw + x]; if (((p shr 16) and 255) >= 30 || ((p shr 8) and 255) >= 30 || (p and 255) >= 30) non++ }
+                if (non > bw * 0.01f) break
+                rows++
+            }
             sampling = false
-            cb(non.toFloat() / px.size)
+            cb((rows / sampleScale).toInt())
         }
         sampling = true
         if (Build.VERSION.SDK_INT >= 26) {
             val loc = IntArray(2); web.getLocationInWindow(loc)
-            val y0 = loc[1] + (if (top) 0 else h - sh)
-            val rect = android.graphics.Rect(loc[0], y0, loc[0] + w, y0 + sh)
+            val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + w, loc[1] + h)
             try {
                 android.view.PixelCopy.request(window, rect, out, { r ->
-                    if (r == android.view.PixelCopy.SUCCESS) analyze() else { sampling = false; cb(1f) }
+                    if (r == android.view.PixelCopy.SUCCESS) analyze() else { sampling = false; cb(0) }
                 }, handler2)
-            } catch (e: Exception) { sampling = false; cb(1f) }
+            } catch (e: Exception) { sampling = false; cb(0) }
         } else {
             out.eraseColor(android.graphics.Color.WHITE)
             val c = android.graphics.Canvas(out)
-            c.scale(scale, scale); c.translate(0f, if (top) 0f else -(h - sh).toFloat())
+            c.scale(sampleScale, sampleScale)
             web.draw(c); analyze()
         }
     }
@@ -487,20 +491,41 @@ class MainActivity : Activity() {
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
         val detect = snapImg
-        var seenNonBlack = false // 시작 위치가 이미 검은 경계면, 경계를 벗어난 뒤부터 감지(다음 이동이 막히지 않게)
+        val goTop = dist < 0
+        val minMove = abs(dist) * 0.5f // 설정한 이동 거리의 50% 이내에서 시작된 검은 영역은 무시
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = smoothMs.toLong(); interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener { anim ->
                 val target = (anim.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
-                if (detect) sampleStrip(dist < 0) { ratio ->
-                    if (pageAnim === anim) {
-                        if (ratio > 0.01f) seenNonBlack = true
-                        else if (seenNonBlack && anim.animatedFraction > 0.03f) anim.cancel() // 검은 경계가 일정 높이 이상 보이면 그 위 이미지에서 멈춤
+                if (detect) {
+                    val movedAtReq = abs(done)
+                    sampleEdgeBlack(goTop) { blackPx ->
+                        // 검은 영역이 시작된 위치(= 이동량 - 보이는 검은 높이)가 50% 지점 이후일 때만 유효
+                        if (pageAnim === anim && blackPx >= blackH * density && movedAtReq - blackPx >= minMove) {
+                            anim.cancel()
+                            handler2.postDelayed({ alignAboveBlack(goTop) }, 60) // 멈춘 뒤 정확히 다시 측정해 검은 영역이 안 보이도록 되돌림
+                        }
                     }
                 }
             }
             start()
+        }
+    }
+
+    /** 검은 영역의 윗변이 화면 가장자리에 오도록(= 검은색이 보이지 않고 그 위 이미지에서 멈추도록) 뒤로 되돌림 */
+    private fun alignAboveBlack(goTop: Boolean, retry: Int = 0) {
+        if (sampling && retry < 5) { handler2.postDelayed({ alignAboveBlack(goTop, retry + 1) }, 40); return }
+        sampleEdgeBlack(goTop) { blackPx ->
+            if (blackPx > 0) {
+                val back = if (goTop) blackPx else -blackPx
+                var d = 0
+                pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 120; interpolator = android.view.animation.DecelerateInterpolator()
+                    addUpdateListener { val t = (it.animatedValue as Float * back).toInt(); web.scrollBy(0, t - d); d = t }
+                    start()
+                }
+            }
         }
     }
 
@@ -722,12 +747,12 @@ class MainActivity : Activity() {
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         sw("이동 중 검은 경계(이미지 사이 검은색)가 보이면 그 위 이미지에서 멈춤", snapImg) { snapImg = it }
-        bar("검은 영역 감지 높이(이 높이 이상 검게 보이면 멈춤) ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
+        bar("검은 영역 감지 높이(이 높이 이상 보이면 그 위에서 멈춤) ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
         box.addView(Button(this).apply {
             text = "검은 영역 감지 테스트 (현재 화면 위/아래 띠 확인)"
             setOnClickListener {
-                sampleStrip(false) { bot -> sampleStrip(true) { top ->
-                    Toast.makeText(this@MainActivity, "아래 띠 비검정 ${(bot * 100).toInt()}% / 위 띠 비검정 ${(top * 100).toInt()}% (1% 이하=검정으로 판정)", Toast.LENGTH_LONG).show()
+                sampleEdgeBlack(false) { bot -> sampleEdgeBlack(true) { top ->
+                    Toast.makeText(this@MainActivity, "아래쪽 연속 검은 영역 ${(bot / density).toInt()}dp / 위쪽 ${(top / density).toInt()}dp (감지 높이 ${blackH}dp 이상이면 경계로 판단)", Toast.LENGTH_LONG).show()
                 } }
             }
         })
