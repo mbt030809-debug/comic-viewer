@@ -675,8 +675,12 @@ class MainActivity : Activity() {
         val m = skipTopPct / 100f * hCss // 화면 높이의 N%만큼 위를 비워 다음 이미지 윗부분이 카메라에 가려지지 않게
         // 이미 경계 바로 앞에서 멈춘 상태라면, 다음 이동은 경계(단색 띠)를 건너뛰어 다음 이미지 맨 위가 보이게 함
         if (skipBand) {
-            if (dist > 0) bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }?.let { b ->
-                val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) return t
+            if (dist > 0) {
+                // 경계 뛰어넘기가 x% 이동보다 우선: (1) 경계 바로 앞에 멈춰 있거나 (2) 경계가 화면 안에 보이고 건너뛰는 이동량이 최소 y%(무시 구간) 이상이면 경계를 건너뜀
+                val minMove = (ignorePct / 100f) * d
+                val b = bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }
+                    ?: bands.firstOrNull { it[0] > cur && it[0] < cur + visH - tol && (it[1] - m - cur) >= minMove }
+                if (b != null) { val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) return t }
             } else bands.lastOrNull { abs(it[1] - cur) <= tol || abs(it[1] - m - cur) <= tol }?.let { b ->
                 val t = ((b[0] + m - visH - cur) * density).toInt(); if (t < -4) return t // 위로: 윗 이미지의 끝이 화면 아래에 오도록
             }
