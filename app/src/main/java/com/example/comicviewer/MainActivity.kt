@@ -54,7 +54,7 @@ class MainActivity : Activity() {
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
-    private var blackLevel get() = prefs.getInt("blackLevel", 45); set(v) = prefs.edit().putInt("blackLevel", v).apply() // 검정으로 볼 밝기 상한(0~255)
+    private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
@@ -552,7 +552,7 @@ class MainActivity : Activity() {
     private fun scheduleAnalysis() {
         if (!snapImg) return
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", blackLevel, blackL, blackW) }
+            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) }
         }
     }
 
@@ -560,8 +560,8 @@ class MainActivity : Activity() {
     private fun bandsOf(dark: Boolean, imgs: List<Img>): List<FloatArray> {
         val raw = ArrayList<FloatArray>()
         imgs.forEachIndexed { i, im ->
-            analyzer.cached(im.src, blackLevel, blackL, blackW)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
-            if (dark && i + 1 < imgs.size) { val b = im.t + im.h; val n = imgs[i + 1].t; if (n - b > 0f) raw.add(floatArrayOf(b, n)) }
+            analyzer.cached(im.src, colorTol, blackL, blackW)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
+            if (i + 1 < imgs.size) { val b = im.t + im.h; val n = imgs[i + 1].t; if (n - b > 0f) raw.add(floatArrayOf(b, n)) } // 이미지 사이 빈 영역(배경색이 검정/흰색 등 무엇이든)
         }
         raw.sortBy { it[0] }
         val merged = ArrayList<FloatArray>()
@@ -814,23 +814,23 @@ class MainActivity : Activity() {
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
-        sw("검은 경계 멈춤: 이미지를 미리 분석해 검은 띠 바로 위 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
-        bar("무시 구간 (이동 거리의 이 % 이내에서 시작되는 검은 띠는 무시) ", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
-        box.addView(TextView(this).apply { text = "검정 판정 영역: 가로 위치 ${blackL}% / 가로 길이 ${blackW}% / 세로 길이 ${blackH}dp" })
+        sw("경계 멈춤: 이미지 사이 단색 영역(검정/흰색 등)이 보이기 직전 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
+        bar("무시 구간 (이동 거리의 이 % 이내에서 시작되는 단색 띠는 무시) ", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
+        box.addView(TextView(this).apply { text = "단색 판정 영역: 가로 위치 ${blackL}% / 가로 길이 ${blackW}% / 세로 길이 ${blackH}dp" })
         box.addView(Button(this).apply {
-            text = "검정 판정 영역 지정 (사각형을 끌어서 조절 - 워터마크는 영역 밖으로)"
+            text = "단색 판정 영역 지정 (사각형을 끌어서 조절 - 워터마크는 영역 밖으로)"
             setOnClickListener { settingsDlg?.dismiss(); showRegionEditor() }
         })
-        bar("검정으로 볼 밝기 기준(클수록 어두운 회색도 검정 취급) ", 5, 120, blackLevel, { "$it" }) { blackLevel = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
+        bar("같은 색으로 볼 색상 차이 허용 (클수록 비슷한 색도 단색으로 취급) ", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
         box.addView(Button(this).apply {
             text = "분석 상태 확인"
             setOnClickListener {
                 web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
                     val p = parseImgs(r)
-                    val n = p?.second?.count { analyzer.cached(it.src, blackLevel, blackL, blackW) != null } ?: 0
+                    val n = p?.second?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
                     val total = p?.second?.size ?: 0
                     val bands = if (p != null) bandsOf(p.first, p.second).size else 0
-                    Toast.makeText(this@MainActivity, "이미지 $total 장 중 분석 완료 ${n}장 / 검은 띠 ${bands}개 (높이 ${blackH}dp 이상)", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "이미지 $total 장 중 분석 완료 ${n}장 / 단색 띠 ${bands}개 (높이 ${blackH}dp 이상)", Toast.LENGTH_LONG).show()
                 }
             }
         })
