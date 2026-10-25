@@ -29,6 +29,7 @@ class BandAnalyzer {
 
     /** 대기 중인 분석을 모두 취소(페이지 이동 시). 진행 중이던 것은 결과를 버림 */
     fun cancelPending() {
+        if (pending.isEmpty()) return // 대기/진행 중인 분석이 없으면 스레드 풀을 새로 만들 필요 없음
         val old = pool
         pool = Executors.newFixedThreadPool(1)
         old.shutdownNow()
@@ -73,7 +74,8 @@ class BandAnalyzer {
     /** http→https 등 리다이렉트를 직접 따라가고, 응답 코드/크기(25MB)를 읽는 도중에 검사 */
     private fun download(url0: String, referer: String): ByteArray {
         var url = url0
-        for (hop in 0..5) {
+        var hops = 0
+        while (hops++ <= 5) {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 10000; conn.readTimeout = 20000
@@ -98,6 +100,7 @@ class BandAnalyzer {
                     if (out.size() > 25_000_000) throw IllegalStateException("too big")
                 }
             }
+            conn.disconnect()
             return out.toByteArray()
         }
         throw IllegalStateException("too many redirects")

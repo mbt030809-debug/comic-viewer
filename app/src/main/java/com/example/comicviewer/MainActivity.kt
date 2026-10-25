@@ -103,7 +103,6 @@ class MainActivity : Activity() {
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            setSupportMultipleWindows(false); javaScriptCanOpenWindowsAutomatically = false
         }
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
@@ -601,13 +600,13 @@ class MainActivity : Activity() {
     private var analyzeTick = 0
     private class Img(val src: String, val t: Float, val h: Float)
 
-    private class Parsed(val dark: Boolean, val imgs: List<Img>, val blk: List<FloatArray>)
+    private class Parsed(val imgs: List<Img>, val blk: List<FloatArray>)
 
     private fun parseImgs(r: String?): Parsed? = try {
         val o = JSONObject(org.json.JSONTokener(r ?: "").nextValue() as String)
         val a = o.getJSONArray("imgs")
         val bk = o.optJSONArray("blk")
-        Parsed(o.getBoolean("dark"),
+        Parsed(
             List(a.length()) { a.getJSONObject(it).let { j -> Img(j.getString("s"), j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } },
             if (bk == null) emptyList() else List(bk.length()) { bk.getJSONObject(it).let { j -> floatArrayOf(j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } })
     } catch (_: Exception) { null }
@@ -979,7 +978,7 @@ class MainActivity : Activity() {
         private const val SCRIPT = """(function(){
 var o=window.__cvOpts=window.__cvOpts||{};o.two=__TWO__;o.rtl=__RTL__;o.gap=__GAP__;
 if(window.__cvTimer){window.__cvTick();return}
-var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null,menu=null;
+var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null;
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];r.sels=r.sels||[];return r}catch(e){return {urls:[],idx:[],sels:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
@@ -1083,7 +1082,7 @@ window.__cvImgs=function(){var out=[],y=window.scrollY;
  else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)out.push({s:i.currentSrc||i.src,t:q.top+y,h:q.height})})
   out.sort(function(a,b){return a.t-b.t})}
  var blk=[];if(!root){[].slice.call(document.querySelectorAll('img,iframe,canvas,video')).forEach(function(e){if(e.closest('#cv-root')||e.closest('.cv-keep')||(e.tagName=='IMG'&&big(e)))return;var q=e.getBoundingClientRect();if(q.height>=10&&q.width>0)blk.push({t:q.top+y,h:q.height})})} // 큰 이미지가 아닌 보이는 요소(광고·작은 조각·미로딩 이미지): 이미지 사이 빈틈 판정에서 '내용 있음'으로 취급
- return JSON.stringify({dark:false,imgs:out,blk:blk})};
+ return JSON.stringify({imgs:out,blk:blk})};
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
@@ -1121,7 +1120,7 @@ function mkBox(){var W=window.innerWidth,H=window.innerHeight;
    if(w<40){if(!c[1])l=r.right-40;w=40}if(hh<40){if(!c[2])t=r.bottom-40;hh=40}
    setRect(l,t,w,hh)})});}
 function selOf(e){var s=e.id?'#'+CSS.escape(e.id):e.tagName.toLowerCase()+(e.classList.length?'.'+[].map.call(e.classList,CSS.escape).join('.'):'');return s}
-function applyBox(mode){var b=bx.getBoundingClientRect(),r=rules(),hits=[],seen={};
+function applyBox(mode){var b=bx.getBoundingClientRect(),r=rules(),hits=[];
  [].slice.call(document.images).forEach(function(i){var o2=i;
   if(i.closest('#cv-root')){o2=null;[].forEach.call(document.images,function(x){if(x.__cvi===i.__cvi&&!x.closest('#cv-root'))o2=x});if(o2)o2.__cvsrc=i.__cvsrc}
   if(!o2||o2.closest('.cv-keep'))return;

@@ -15,6 +15,7 @@ jobs:
           gradle assembleDebug --console=plain > build.log 2>&1
           rc=$?
           grep -E '^e: |error:|What went wrong' -A2 build.log | head -30 | while read -r l; do echo "::error::$l"; done
+          grep -E '^w: ' build.log | sed 's#file:///home/runner/work/comic-viewer/comic-viewer/##' | head -60 | while read -r l; do echo "::warning::$l"; done
           exit $rc
       - uses: actions/upload-artifact@v4
         with: { name: comic-viewer-debug-apk, path: app/build/outputs/apk/debug/app-debug.apk }
