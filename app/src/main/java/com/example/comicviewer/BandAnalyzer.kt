@@ -10,9 +10,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
- * 이미지를 미리 내려받아 '단색 띠'(거의 검은 연속 행) 위치를 이미지 높이 대비 비율(0~1)로 저장.
- * 완전한 검정이 아니어도(JPEG 잡음 등) tol 이하의 어두운 픽셀이 대부분이면 검은 행으로 판정.
- * 내려받아 축소한 비트맵은 LRU로 보관해, 밝기/영역 설정을 바꿔도 다시 내려받지 않고 재분석.
+ * 이미지를 미리 내려받아 '단색 띠'(색 차이가 허용치 이내인 연속 행, 검정/흰색/기타 단색) 위치를 이미지 높이 대비 비율(0~1)로 저장.
+ * 내려받아 축소한 비트맵은 LRU로 보관해, 허용치/영역 설정을 바꿔도 다시 내려받지 않고 재분석.
  */
 class BandAnalyzer {
     @Volatile private var pool = Executors.newFixedThreadPool(1) // 1개 스레드: 사이트에 부하를 덜 주고 페이지 로딩을 방해하지 않음
@@ -36,7 +35,7 @@ class BandAnalyzer {
         pending.clear()
     }
 
-    /** left/width: 검은색 판정에 쓸 가로 영역(이미지 너비 대비 %). 오른쪽 워터마크 등을 제외하려고 사용 */
+    /** left/width: 단색 판정에 쓸 가로 영역(이미지 너비 대비 %). 오른쪽 워터마크 등을 제외하려고 사용 */
     fun enqueue(url: String, referer: String, tol: Int, left: Int, width: Int) {
         val k = key(url, tol, left, width)
         if (cache.containsKey(k)) return

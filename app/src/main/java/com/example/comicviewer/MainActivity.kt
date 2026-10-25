@@ -54,15 +54,15 @@ class MainActivity : Activity() {
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
-    private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
+    private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 이미지 사이 단색 경계 직전에서 멈춤
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
-    private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
+    private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 단색 띠는 무시
     private var stopBottomPct get() = prefs.getInt("stopBottomPct", 5); set(v) = prefs.edit().putInt("stopBottomPct", v).apply() // 경계에서 멈출 때 화면 아래에 남길 여백(화면 높이 %)
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
-    private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
-    private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
-    private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
+    private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 단색 판정 영역: 왼쪽 위치(이미지 너비 %)
+    private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 단색 판정 영역: 가로 폭(%)
+    private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 단색 띠로 볼 최소 높이(dp)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -177,7 +177,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
+    override fun onPause() { touching = false; applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
     override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -524,8 +524,8 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 검정 판정 영역 편집기: 화면에 사각형을 띄워 드래그(이동)·모서리(크기)로 지정.
-     * 가로 위치/길이는 웹페이지 너비 대비 %, 세로 길이는 dp(=검은 띠 최소 높이)로 저장.
+     * 단색 판정 영역 편집기: 화면에 사각형을 띄워 드래그(이동)·모서리(크기)로 지정.
+     * 가로 위치/길이는 웹페이지 너비 대비 %, 세로 길이는 dp(=단색 띠 최소 높이)로 저장.
      */
     private var settingsDlg: AlertDialog? = null
     private var regionScrim: View? = null
@@ -597,7 +597,7 @@ class MainActivity : Activity() {
         regionScrim = scrim
     }
 
-    // ---- 검은 경계 멈춤: 이미지를 미리 내려받아 분석한 검은 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
+    // ---- 경계 멈춤: 이미지를 미리 내려받아 분석한 단색 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
     private val analyzer = BandAnalyzer()
     private val rescan = Runnable { analyzer.clear(); scheduleAnalysis() } // 슬라이더 조작 중 연속 재분석 방지(디바운스)
     private var analyzeTick = 0
@@ -653,7 +653,7 @@ class MainActivity : Activity() {
         return merged.filter { it[1] - it[0] >= it[2] }
     }
 
-    /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
+    /** 이동 목표를 단색 띠 앞/뒤로 조정(멈춤·건너뜀). 설정한 무시 구간(%) 이내의 띠는 무시. 해당 없으면 null(일반 이동) */
     private fun computeSnap(r: String?, dist: Int, viewH: Int): Int? {
         val parsed = parseImgs(r) ?: return null
         val bands = bandsOf(parsed)
