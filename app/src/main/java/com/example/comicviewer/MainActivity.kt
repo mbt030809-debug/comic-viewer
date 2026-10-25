@@ -85,7 +85,9 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
         }
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF111111.toInt())) // 시스템 바 뒤/가장자리가 회색으로 보이지 않게
         setContentView(R.layout.activity_main)
+        setupEdgeToEdge()
         prefs = getSharedPreferences("cv", MODE_PRIVATE)
         web = findViewById(R.id.web); urlInput = findViewById(R.id.urlInput)
         topBar = findViewById(R.id.topBar); autoBtn = findViewById(R.id.autoBtn); twoBtn = findViewById(R.id.twoBtn)
@@ -335,6 +337,25 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && full) applySystemBars(true)
     }
+    /** 화면 전체(상태바·카메라 영역 포함)를 앱이 그리고, 시스템 바가 보일 때만 그 높이만큼 메뉴/웹뷰 여백을 둠 */
+    @Suppress("DEPRECATION")
+    private fun setupEdgeToEdge() {
+        val rootV = findViewById<View>(R.id.root)
+        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
+        else window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        rootV.setOnApplyWindowInsetsListener { _, insets ->
+            val top: Int; val bottom: Int
+            if (Build.VERSION.SDK_INT >= 30) { val b = insets.getInsets(WindowInsets.Type.systemBars()); top = b.top; bottom = b.bottom }
+            else { top = insets.systemWindowInsetTop; bottom = insets.systemWindowInsetBottom }
+            val bar = findViewById<View>(R.id.topBar)
+            if (bar.paddingTop != top) bar.setPadding(0, top, 0, 0)
+            val lp = web.layoutParams as FrameLayout.LayoutParams
+            if (lp.bottomMargin != bottom) { lp.bottomMargin = bottom; web.layoutParams = lp }
+            insets
+        }
+        rootV.requestApplyInsets()
+    }
+
     private fun applySystemBars(hide: Boolean) {
         if (Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.let {
@@ -344,7 +365,7 @@ class MainActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.systemUiVisibility = if (hide) (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE) else View.SYSTEM_UI_FLAG_VISIBLE
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION) else (View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
         }
     }
     private fun setFull(v: Boolean) {
@@ -358,21 +379,28 @@ class MainActivity : Activity() {
         }
         val h = topBar.measuredHeight.coerceAtLeast(1)
         val lp = web.layoutParams as FrameLayout.LayoutParams
-        val from = lp.topMargin; val to = if (v) 0 else h
+        val from = (lp.topMargin + web.translationY).toInt() // 현재 눈에 보이는 웹페이지 상단 위치
+        val to = if (v) 0 else h
         menuAnim?.cancel()
         topBar.visibility = View.VISIBLE
-        menuAnim = ValueAnimator.ofInt(from, to).apply {
+        // 웹뷰 크기는 한 번만 바꾸고(레이아웃 1회), 이동은 translationY로 보여줘 애니메이션 중 끊김을 줄임
+        lp.topMargin = to; web.layoutParams = lp
+        web.translationY = (from - to).toFloat()
+        menuAnim = ValueAnimator.ofFloat(web.translationY, 0f).apply {
             duration = 300; interpolator = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f)
             addUpdateListener {
-                val m = it.animatedValue as Int
-                val p2 = web.layoutParams as FrameLayout.LayoutParams
-                p2.topMargin = m; web.layoutParams = p2
-                topBar.translationY = (m - h).toFloat(); topBar.alpha = (m.toFloat() / h).coerceIn(0f, 1f)
+                val ty = it.animatedValue as Float
+                web.translationY = ty
+                val m = to + ty // 눈에 보이는 웹페이지 상단 위치
+                topBar.translationY = m - h; topBar.alpha = (m / h).coerceIn(0f, 1f)
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 private var cancelled = false
                 override fun onAnimationCancel(a: android.animation.Animator) { cancelled = true }
-                override fun onAnimationEnd(a: android.animation.Animator) { if (!cancelled && full) topBar.visibility = View.GONE }
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    web.translationY = 0f
+                    if (!cancelled && full) topBar.visibility = View.GONE
+                }
             })
             start()
         }
@@ -902,10 +930,12 @@ var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,ro
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];r.sels=r.sels||[];return r}catch(e){return {urls:[],idx:[],sels:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
-function big(i){var w=i.naturalWidth,h=i.naturalHeight;
- if(!w||!h||w<350||h<100||w/h>8)return false;
+function big(i){if(i.__cvb!==undefined)return i.__cvb; // 크기가 확정된 이미지는 한 번만 판정(매번 레이아웃 계산 방지)
+ var w=i.naturalWidth,h=i.naturalHeight;
+ if(!w||!h)return false;
+ if(w<350||h<100||w/h>8)return(i.__cvb=false);
  var r=i.getBoundingClientRect();
- return r.width==0||r.width>=window.innerWidth*0.6;}
+ return(i.__cvb=(r.width==0||r.width>=window.innerWidth*0.6));}
 function takeAnchor(bigs){anchorTaken=1;
  for(var n=0;n<bigs.length;n++){var r=bigs[n].getBoundingClientRect();
   if(r.bottom>1&&r.height>0){anchor={cvi:bigs[n].__cvi,frac:r.top<0?(-r.top/r.height):0};return}}
@@ -947,16 +977,18 @@ function add(i){var src=i.currentSrc||i.src;
  strips.forEach(function(s){var a=new Image();a.src=src;a.__cvi=i.__cvi;a.__cvsrc=src;
   var ref=null,k=s.children;for(var n=0;n<k.length;n++){if(k[n].__cvi>a.__cvi){ref=k[n];break}}
   s.insertBefore(a,ref);});}
-function upd(){if(!root)return;
+function upd(full){if(!root)return;
  var H=window.innerHeight,y=window.scrollY;
  root.style.flexDirection=o.rtl?'row-reverse':'row';root.style.gap=o.gap+'px';
  root.style.width='100%';root.style.left='0';
  strips[0].style.transform='translate3d(0,'+(-y)+'px,0)';
  strips[1].style.transform='translate3d(0,'+(-(y+H))+'px,0)';
- spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';}
+ if(full!==false)spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';} // 스크롤 중에는 offsetHeight(강제 레이아웃) 읽지 않음
 function rebuild(){strips.forEach(function(s){s.innerHTML=''});
  [].forEach.call(document.images,function(i){i.__cva=0});tick();}
-function tick(){try{tick0()}catch(e){window.__cvErr=String(e&&e.message||e);if(!window.__cvErrShown){window.__cvErrShown=1;var d=box('cv-err','bottom:0;background:#c00');d.textContent='두쪽 보기 오류: '+window.__cvErr;setTimeout(function(){d.remove()},8000)}}}
+var lastScroll=0;
+function tick(){if(root&&Date.now()-lastScroll<300)return; // 스크롤 중에는 무거운 점검을 건너뜀
+ try{tick0()}catch(e){window.__cvErr=String(e&&e.message||e);if(!window.__cvErrShown){window.__cvErrShown=1;var d=box('cv-err','bottom:0;background:#c00');d.textContent='두쪽 보기 오류: '+window.__cvErr;setTimeout(function(){d.remove()},8000)}}}
 function tick0(){
  var imgs=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
  imgs.forEach(function(i){
@@ -1063,8 +1095,8 @@ window.__cvEx=function(on){exMode=on;if(bar){bar.remove();bar=null}if(bx){bx.rem
   bar.appendChild(btn('종료',function(){window.__cvEx(false)}));
   bar.appendChild(btn('규칙 초기화',function(){saveRules({urls:[],idx:[],sels:[]});location.reload()}));
   bar.appendChild(res);}};
-window.addEventListener('scroll',upd,{passive:true});window.addEventListener('resize',upd);
-window.__cvTimer=setInterval(tick,500);tick();
+window.addEventListener('scroll',function(){lastScroll=Date.now();upd(false)},{passive:true});window.addEventListener('resize',function(){upd()});
+window.__cvTimer=setInterval(tick,800);tick();
 })()"""
     }
 }
