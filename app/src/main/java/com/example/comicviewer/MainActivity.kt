@@ -53,7 +53,8 @@ class MainActivity : Activity() {
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
-    private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 이동 후 이미지 경계에 맞춤
+    private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
+    private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -438,33 +439,49 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
-        if (!snapImg) { animateScroll(dist); return }
-        // 이미지 경계에 맞춤: 목표 위치에서 가까운 이미지 윗변(거리 35% 이내)이 있으면 그 위치에서 멈춤
-        web.evaluateJavascript("window.__cvBounds?window.__cvBounds():'[]'") { r ->
-            var delta = dist
-            try {
-                val arr = JSONArray(org.json.JSONTokener(r ?: "\"[]\"").nextValue() as? String ?: "[]")
-                val cur = web.scrollY; val target = cur + dist
-                var best = target; var bd = Int.MAX_VALUE
-                for (i in 0 until arr.length()) {
-                    val px = (arr.getDouble(i) * density).toInt(); val d = abs(px - target)
-                    if (d < bd && d <= abs(dist) * 0.35f) { bd = d; best = px }
-                }
-                if (abs(best - cur) >= 20) delta = best - cur
-            } catch (_: Exception) {}
-            animateScroll(delta)
-        }
+        animateScroll(dist)
     }
+
+    /** 이동 방향 쪽 화면 가장자리의 띠(높이 blackH dp)가 전부 검은색인지 샘플링 (이미지 사이 검은 경계 감지) */
+    private var sampleBmp: Bitmap? = null
+    private fun nonBlackRatio(top: Boolean): Float {
+        val w = web.width; val h = web.height
+        if (w <= 0 || h <= 0) return 1f
+        val scale = 0.2f
+        val sh = (blackH * density).toInt().coerceIn(8, h)
+        val bw = (w * scale).toInt().coerceAtLeast(8); val bh = (sh * scale).toInt().coerceAtLeast(2)
+        var bmp = sampleBmp
+        if (bmp == null || bmp.width != bw || bmp.height != bh) { bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); sampleBmp = bmp }
+        bmp!!.eraseColor(android.graphics.Color.WHITE) // 그리기에 실패하면 흰색 그대로 → '검정 아님'으로 안전하게 처리
+        val c = android.graphics.Canvas(bmp)
+        c.scale(scale, scale)
+        c.translate(0f, if (top) 0f else -(h - sh).toFloat())
+        web.draw(c)
+        val px = IntArray(bw * bh); bmp.getPixels(px, 0, bw, 0, 0, bw, bh)
+        var non = 0
+        for (p in px) if (((p shr 16) and 255) >= 30 || ((p shr 8) and 255) >= 30 || (p and 255) >= 30) non++
+        return non.toFloat() / px.size
+    }
+    private fun stripIsBlack(top: Boolean) = nonBlackRatio(top) <= 0.01f
 
     private fun animateScroll(dist: Int) {
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
+        val detect = snapImg
+        var seenNonBlack = detect && !stripIsBlack(dist < 0) // 시작 위치가 이미 검은 경계면, 경계를 벗어난 뒤부터 감지
+        var lastSample = 0L
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = smoothMs.toLong(); interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener {
-                val target = (it.animatedValue as Float * dist).toInt()
+            addUpdateListener { anim ->
+                val target = (anim.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
+                val now = System.currentTimeMillis()
+                if (detect && now - lastSample >= 16) {
+                    lastSample = now
+                    if (!stripIsBlack(dist < 0)) seenNonBlack = true
+                    else if (seenNonBlack && anim.animatedFraction > 0.03f) anim.cancel() // 검은 경계가 일정 높이 이상 보이면 그 위 이미지에서 멈춤
+                }
             }
             start()
         }
@@ -687,7 +704,15 @@ class MainActivity : Activity() {
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
-        sw("이동 후 이미지 경계(이미지 맨 위)에 맞춰 멈춤", snapImg) { snapImg = it }
+        sw("이동 중 검은 경계(이미지 사이 검은색)가 보이면 그 위 이미지에서 멈춤", snapImg) { snapImg = it }
+        bar("검은 영역 감지 높이(이 높이 이상 검게 보이면 멈춤) ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
+        box.addView(Button(this).apply {
+            text = "검은 영역 감지 테스트 (현재 화면 위/아래 띠 확인)"
+            setOnClickListener {
+                val bot = nonBlackRatio(false); val top = nonBlackRatio(true)
+                Toast.makeText(this@MainActivity, "아래 띠 비검정 ${(bot * 100).toInt()}% / 위 띠 비검정 ${(top * 100).toInt()}% (1% 이하=검정으로 판정)", Toast.LENGTH_LONG).show()
+            }
+        })
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
         bar("▼ 꾹 누름 연속 스크롤 속도 ", 100, 5000, holdSpeed, { "${it}px/초" }) { holdSpeed = it / 50 * 50 }
         box.addView(Button(this).apply { text = "버튼 위치 초기화 (이동은 상단 메뉴 '편집')"; setOnClickListener { resetBtnPositions() } })
