@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.SharedPreferences
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
@@ -41,7 +40,6 @@ class MainActivity : Activity() {
     private var two get() = prefs.getBoolean("two", false); set(v) = prefs.edit().putBoolean("two", v).apply()
     private var rtl get() = prefs.getBoolean("rtl", false); set(v) = prefs.edit().putBoolean("rtl", v).apply()
     private var gap get() = prefs.getInt("gap", 8); set(v) = prefs.edit().putInt("gap", v).apply()
-    private var adblock get() = prefs.getBoolean("adblock", true); set(v) = prefs.edit().putBoolean("adblock", v).apply()
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
     private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
@@ -62,7 +60,6 @@ class MainActivity : Activity() {
     private var stopBottomPct get() = prefs.getInt("stopBottomPct", 5); set(v) = prefs.edit().putInt("stopBottomPct", v).apply() // 경계에서 멈출 때 화면 아래에 남길 여백(화면 높이 %)
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
-    private var uaSpoof get() = prefs.getBoolean("uaSpoof", true); set(v) = prefs.edit().putBoolean("uaSpoof", v).apply() // 데스크톱 크롬형 UA 위장 사용
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
     private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
@@ -78,12 +75,6 @@ class MainActivity : Activity() {
     private val clearResume = Runnable { resumeAuto = false }
     /** 다음화 이동 후 자동 스크롤을 이어갈 예약. 페이지 로드가 없으면 10초 뒤 자동 해제 */
     private fun armResume() { resumeAuto = true; handler2.removeCallbacks(clearResume); handler2.postDelayed(clearResume, 10000) }
-
-    private val adHosts = listOf(
-        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google",
-        "adnxs.com", "taboola.com", "outbrain.com", "criteo.", "adsterra", "popads", "popcash",
-        "exoclick", "propellerads", "adsystem", "moatads", "2mdn.net", "adform.net", "adcash",
-    )
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(b: Bundle?) {
@@ -112,7 +103,6 @@ class MainActivity : Activity() {
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            userAgentString = if (uaSpoof) BandAnalyzer.ImageUa else WebSettings.getDefaultUserAgent(this@MainActivity)
             setSupportMultipleWindows(false); javaScriptCanOpenWindowsAutomatically = false
         }
         CookieManager.getInstance().setAcceptCookie(true)
@@ -135,13 +125,6 @@ class MainActivity : Activity() {
             }
             override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
                 if (r.isForMainFrame) Toast.makeText(this@MainActivity, "로드 실패 · ${e.description}", Toast.LENGTH_SHORT).show()
-            }
-            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
-                if (adblock) {
-                    val h = r.url.host ?: ""
-                    if (adHosts.any { h.contains(it) }) return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
-                }
-                return null
             }
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 val s = r.url.scheme
@@ -181,10 +164,6 @@ class MainActivity : Activity() {
 
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
-    }
-
-    override fun onConfigurationChanged(c: Configuration) {
-        super.onConfigurationChanged(c) // 실제 처리는 루트 레이아웃 너비 변경 리스너(onWidthChanged)에서
     }
 
     /** 접힘↔펼침 등으로 창 너비가 바뀐 뒤(레이아웃 완료 후) 호출 */
@@ -974,31 +953,14 @@ class MainActivity : Activity() {
         bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
         bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
         btn("영역 ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }
-        btn("분석 상태") {
-            web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-                val pr = parseImgs(r)
-                val n = pr?.imgs?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
-                val total = pr?.imgs?.size ?: 0
-                val bands = if (pr != null) bandsOf(pr).size else 0
-                Toast.makeText(this@MainActivity, "분석 $n/$total · 띠 $bands", Toast.LENGTH_LONG).show()
-            }
-        }
 
         group("광고")
-        sw("도메인 차단", adblock) { adblock = it }
-        sw("크롬 UA", uaSpoof) { uaSpoof = it; needReload = true; web.settings.userAgentString = if (it) BandAnalyzer.ImageUa else WebSettings.getDefaultUserAgent(this@MainActivity); BandAnalyzer.userAgent = web.settings.userAgentString }
         btn("광고 제거") {
             settingsDlg?.dismiss()
             handler2.postDelayed({ // 닫힘 리스너(변경 적용/새로고침)가 먼저 끝난 뒤 실행
                 injectScript(); setFull(true)
                 web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
             }, 400)
-        }
-        btn("두쪽 진단") {
-            web.evaluateJavascript("window.__cvInfo?window.__cvInfo():'스크립트 미실행'") { r ->
-                AlertDialog.Builder(this@MainActivity).setTitle("진단")
-                    .setMessage((r ?: "").trim('"').replace("\\u003C", "<")).setPositiveButton("확인", null).show()
-            }
         }
         box.isFocusableInTouchMode = true; box.descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS; box.requestFocus() // 처음 포커스가 입력칸으로 가서 아래로 스크롤되는 것 방지
         val sv = ScrollView(this).apply { addView(box) }
@@ -1116,20 +1078,12 @@ function tick0(){
 function info(){var im=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
  var sz=im.map(function(i){return i.naturalWidth+'x'+i.naturalHeight+'('+Math.round(i.getBoundingClientRect().width)+')'}).sort(function(a,b){return parseInt(b)*parseInt(b.split('x')[1])-parseInt(a)*parseInt(a.split('x')[1])}).slice(0,5);
  return 'img '+im.length+'개, 큰 이미지 '+im.filter(big).length+'개, 상위: '+sz.join(', ')+(window.__cvErr?' / 오류: '+window.__cvErr:'')+' / 패널 '+(strips[0]?strips[0].children.length:'없음')+' / iframe '+document.querySelectorAll('iframe').length+' / canvas '+document.querySelectorAll('canvas').length;}
-window.__cvInfo=info;
-window.__cvBounds=function(){var r=[];
- if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)r.push(k[n].offsetTop)}
- else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)r.push(q.top+window.scrollY)})}
- return JSON.stringify(r)};
 window.__cvImgs=function(){var out=[],y=window.scrollY;
- function lum(c){var m=/(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(c||'');if(!m)return null;if(m[4]!==undefined&&parseFloat(m[4])==0)return null;return 0.3*m[1]+0.59*m[2]+0.11*m[3]}
- var l=lum(getComputedStyle(document.body).backgroundColor);if(l===null)l=lum(getComputedStyle(document.documentElement).backgroundColor);
- var dark=l!==null&&l<60;
  if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)out.push({s:k[n].__cvsrc||k[n].src,t:k[n].offsetTop,h:k[n].offsetHeight})}
  else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)out.push({s:i.currentSrc||i.src,t:q.top+y,h:q.height})})
   out.sort(function(a,b){return a.t-b.t})}
  var blk=[];if(!root){[].slice.call(document.querySelectorAll('img,iframe,canvas,video')).forEach(function(e){if(e.closest('#cv-root')||e.closest('.cv-keep')||(e.tagName=='IMG'&&big(e)))return;var q=e.getBoundingClientRect();if(q.height>=10&&q.width>0)blk.push({t:q.top+y,h:q.height})})} // 큰 이미지가 아닌 보이는 요소(광고·작은 조각·미로딩 이미지): 이미지 사이 빈틈 판정에서 '내용 있음'으로 취급
- return JSON.stringify({dark:dark,imgs:out,blk:blk})};
+ return JSON.stringify({dark:false,imgs:out,blk:blk})};
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');

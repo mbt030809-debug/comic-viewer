@@ -25,7 +25,6 @@ class BandAnalyzer {
 
     private fun key(url: String, tol: Int, left: Int, width: Int) = "$tol|$left|$width|$url"
     fun cached(url: String, tol: Int, left: Int, width: Int): List<FloatArray>? = cache[key(url, tol, left, width)]
-    fun analyzedCount() = cache.size
     fun shutdown() { pool.shutdownNow() }
 
     /** 대기 중인 분석을 모두 취소(페이지 이동 시). 진행 중이던 것은 결과를 버림 */
@@ -149,7 +148,6 @@ class BandAnalyzer {
     }
 
     companion object {
-        @Volatile var userAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
-        const val ImageUa = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+        @Volatile var userAgent = "" // 웹뷰의 UA를 그대로 사용(MainActivity에서 설정)
     }
 }
