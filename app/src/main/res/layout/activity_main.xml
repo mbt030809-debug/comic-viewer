@@ -34,6 +34,8 @@
                 android:layout_height="wrap_content" android:text="두쪽" />
             <Button android:id="@+id/topBtn" android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="맨위로" />
+            <Button android:id="@+id/editBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="편집" />
         </LinearLayout>
     </LinearLayout>
 

@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private var pageRatio2 get() = prefs.getInt("ratio2", 100); set(v) = prefs.edit().putInt("ratio2", v).apply() // 두쪽 보기 1회 이동 거리(%)
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
+    private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -141,9 +142,13 @@ class MainActivity : Activity() {
         twoBtn.setOnClickListener { applyTwo(!two) }
         autoBtn.setOnClickListener { applyAuto(!auto) }
         nextBtn.setOnClickListener { goNext() }
+        findViewById<View>(R.id.editBtn).setOnClickListener {
+            editMode = !editMode; applyEditVisual()
+            if (editMode) Toast.makeText(this, "우측 버튼을 드래그해 옮기세요. 편집 버튼을 다시 누르면 종료", Toast.LENGTH_LONG).show()
+        }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
-        updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons()
+        updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons(); applyEditVisual()
         if (foldAutoTwo) { two = expanded; updateTwoBtn() }
         findViewById<View>(R.id.root).addOnLayoutChangeListener { _, l, _, r, _, ol, _, orr, _ ->
             val w = r - l
@@ -212,6 +217,29 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---- 버튼 편집 모드: 상단 메뉴 '편집'을 켜면 우측 버튼을 바로 드래그해 이동 ----
+    private var editMode = false
+    private fun applyEditVisual() { floatBtns().forEach { it.setBackgroundColor(if (editMode) 0x66FFFFFF else 0) }; findViewById<Button>(R.id.editBtn).text = if (editMode) "편집●" else "편집" }
+
+    // ---- ▼ 꾹 누르면 누르는 동안 연속 스크롤(속도 설정) ----
+    private var holding = false
+    private val holdFrame = object : Choreographer.FrameCallback {
+        var last = 0L; var acc = 0f
+        override fun doFrame(t: Long) {
+            if (!holding) return
+            if (last != 0L) {
+                acc += holdSpeed * (t - last) / 1e9f
+                val d = acc.toInt()
+                if (d != 0) { web.scrollBy(0, d); acc -= d }
+                if (atBottom()) { stopHold(); return }
+            }
+            last = t
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+    private fun startHold() { holding = true; applyAuto(false); pageAnim?.cancel(); setFull(true); holdFrame.last = 0L; holdFrame.acc = 0f; Choreographer.getInstance().postFrameCallback(holdFrame) }
+    private fun stopHold() { holding = false; Choreographer.getInstance().removeFrameCallback(holdFrame) }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun initDraggableButtons() {
         val layer = findViewById<View>(R.id.btnLayer)
@@ -219,36 +247,38 @@ class MainActivity : Activity() {
         layer.post { placeBtns() }
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         floatBtns().forEach { v ->
-            var downX = 0f; var downY = 0f; var offX = 0f; var offY = 0f
-            var dragging = false; var cancelled = false
-            val lp = Runnable { dragging = true; v.scaleX = 1.25f; v.scaleY = 1.25f; v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) }
+            var offX = 0f; var offY = 0f; var downX = 0f; var downY = 0f
+            var held = false; var cancelled = false
+            val holdStart = Runnable { held = true; v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); startHold() }
             v.setOnTouchListener { view, e ->
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        downX = e.rawX; downY = e.rawY; offX = view.x - e.rawX; offY = view.y - e.rawY
-                        dragging = false; cancelled = false
-                        handler2.postDelayed(lp, 500); true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (dragging) {
+                if (editMode) { // 편집 모드: 즉시 드래그로 이동, 놓으면 위치 저장 (클릭 동작 없음)
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> { offX = view.x - e.rawX; offY = view.y - e.rawY; view.scaleX = 1.15f; view.scaleY = 1.15f }
+                        MotionEvent.ACTION_MOVE -> {
                             view.parent.requestDisallowInterceptTouchEvent(true)
                             val pw = layer.width.toFloat(); val ph = layer.height.toFloat()
                             view.x = (e.rawX + offX).coerceIn(0f, pw - view.width); view.y = (e.rawY + offY).coerceIn(0f, ph - view.height)
-                        } else if (abs(e.rawX - downX) > slop || abs(e.rawY - downY) > slop) { cancelled = true; handler2.removeCallbacks(lp) }
-                        true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        handler2.removeCallbacks(lp)
-                        if (dragging) {
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             view.scaleX = 1f; view.scaleY = 1f
                             val k = resources.getResourceEntryName(view.id)
                             prefs.edit().putFloat("bx_$k", view.x / layer.width).putFloat("by_$k", view.y / layer.height).apply()
-                            dragging = false
-                        } else if (e.actionMasked == MotionEvent.ACTION_UP && !cancelled) view.performClick()
-                        true
+                        }
                     }
-                    else -> true
+                    return@setOnTouchListener true
                 }
+                if (view.id == R.id.downBtn) { // 탭=1페이지 이동, 꾹=연속 스크롤
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> { held = false; cancelled = false; downX = e.rawX; downY = e.rawY; handler2.postDelayed(holdStart, 400) }
+                        MotionEvent.ACTION_MOVE -> if (!held && (abs(e.rawX - downX) > slop * 3 || abs(e.rawY - downY) > slop * 3)) { cancelled = true; handler2.removeCallbacks(holdStart) }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            handler2.removeCallbacks(holdStart)
+                            if (held) { stopHold(); held = false }
+                            else if (e.actionMasked == MotionEvent.ACTION_UP && !cancelled) view.performClick()
+                        }
+                    }
+                } else if (e.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+                true
             }
         }
     }
@@ -305,6 +335,7 @@ class MainActivity : Activity() {
         }
     }
     private fun setFull(v: Boolean) {
+        if (v && editMode) return // 버튼 편집 중에는 메뉴를 숨기지 않음
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
         // 메뉴 표시/숨김 애니메이션(300ms, One UI 유사 곡선): 메뉴가 나오면 웹페이지가 아래로 밀리고, 숨기면 위로 올라옴
@@ -637,7 +668,8 @@ class MainActivity : Activity() {
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
-        box.addView(Button(this).apply { text = "버튼 위치 초기화 (버튼은 꾹 눌러 드래그로 이동)"; setOnClickListener { resetBtnPositions() } })
+        bar("▼ 꾹 누름 연속 스크롤 속도 ", 100, 5000, holdSpeed, { "${it}px/초" }) { holdSpeed = it / 50 * 50 }
+        box.addView(Button(this).apply { text = "버튼 위치 초기화 (이동은 상단 메뉴 '편집')"; setOnClickListener { resetBtnPositions() } })
         head("[자동 버튼: 계속 흐르는 스크롤]")
         sw("자동 방식2: 1페이지 이동 후 대기를 반복 (끄면 연속 스크롤)", autoPageMode) { autoPageMode = it }
         bar("[방식1: 연속] 속도 ", 20, 2000, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
