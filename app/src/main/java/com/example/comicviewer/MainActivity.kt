@@ -501,7 +501,7 @@ class MainActivity : Activity() {
         if (!snapImg) { animateScroll(dist); return }
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH)
             // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
-            val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(smoothMs / 4, smoothMs * 4)
+            val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8) // 여백(멈춤 아래/건너뜀 위)을 포함한 실제 이동 거리에 비례, 하한·상한은 거의 두지 않아 속도가 일정
             animateScroll(d ?: dist, ms) }
     }
 
