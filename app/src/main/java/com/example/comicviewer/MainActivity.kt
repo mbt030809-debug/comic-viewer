@@ -53,7 +53,6 @@ class MainActivity : Activity() {
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
-    private var hz120 get() = prefs.getBoolean("hz120", false); set(v) = prefs.edit().putBoolean("hz120", v).apply() // 최고 주사율 요청
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 이동 후 이미지 경계에 맞춤
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
@@ -83,7 +82,7 @@ class MainActivity : Activity() {
         web = findViewById(R.id.web); urlInput = findViewById(R.id.urlInput)
         topBar = findViewById(R.id.topBar); autoBtn = findViewById(R.id.autoBtn); twoBtn = findViewById(R.id.twoBtn)
         nextBtn = findViewById(R.id.nextBtn)
-        applyKeepOn(); applyRefreshRate()
+        applyKeepOn()
         initScrollBar()
         findViewById<View>(R.id.topBar).addOnLayoutChangeListener { v, _, t, _, b, _, _, _, _ ->
             // 메뉴가 표시 중이면 웹페이지 상단 여백을 메뉴 높이에 맞춤(초기 표시/높이 변화 대응)
@@ -167,7 +166,7 @@ class MainActivity : Activity() {
 
     /** 접힘↔펼침 등으로 창 너비가 바뀐 뒤(레이아웃 완료 후) 호출 */
     private fun onWidthChanged() {
-        applyScale(); applyRefreshRate() // 폴드 전환 시 디스플레이가 바뀌므로 다시 요청
+        applyScale()
         if (foldAutoTwo) {
             val want = expanded
             if (want != two) { two = want; updateTwoBtn(); if (!want) { web.reload(); return } }
@@ -189,20 +188,6 @@ class MainActivity : Activity() {
         if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
         web.loadUrl(u)
-    }
-
-    /** 최고 주사율 요청: 현재 해상도에서 지원하는 가장 높은 주사율 모드를 선택(기기/시스템이 최종 결정) */
-    @Suppress("DEPRECATION")
-    private fun applyRefreshRate() {
-        val lp = window.attributes
-        if (hz120 && Build.VERSION.SDK_INT >= 23) {
-            val d = windowManager.defaultDisplay
-            val cur = d.mode
-            val best = d.supportedModes.filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
-                .maxByOrNull { it.refreshRate }
-            if (best != null) { lp.preferredDisplayModeId = best.modeId; lp.preferredRefreshRate = best.refreshRate }
-        } else { lp.preferredDisplayModeId = 0; lp.preferredRefreshRate = 0f }
-        window.attributes = lp
     }
 
     private fun applyKeepOn() {
@@ -697,7 +682,6 @@ class MainActivity : Activity() {
         sw("펼침 화면에서 자동으로 두쪽 보기 (접으면 해제)", foldAutoTwo) { foldAutoTwo = it }
         head("[화면]")
         sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
-        sw("최고 주사율(120Hz) 요청 - 배터리 소모 증가, 최종 결정은 시스템", hz120) { hz120 = it; applyRefreshRate() }
         bar("우측 버튼 크기 ", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
         bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
         head("[▲▼ 버튼 / 볼륨키]")
