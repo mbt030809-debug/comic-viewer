@@ -527,10 +527,10 @@ class MainActivity : Activity() {
         val minPx = 20 * density
         var rl = webL + webW * blackL / 100f; var rw = webW * blackW / 100f
         var rh = blackH * density; var rt = (root.height - rh) / 2f
-        lateinit var infoRef: TextView
+        var infoRef: TextView? = null
         fun apply() {
             val lp = FrameLayout.LayoutParams(rw.toInt(), rh.toInt()); lp.leftMargin = rl.toInt(); lp.topMargin = rt.toInt(); rect.layoutParams = lp
-            if (::infoRef.isInitialized) infoRef.text = "${((rl - webL) / webW * 100).toInt().coerceIn(0, 100)}% · ${(rw / webW * 100).toInt().coerceIn(0, 100)}% · ${(rh / density).toInt()}dp"
+            infoRef?.text = "${((rl - webL) / webW * 100).toInt().coerceIn(0, 100)}% · ${(rw / webW * 100).toInt().coerceIn(0, 100)}% · ${(rh / density).toInt()}dp"
         }
         fun clamp() {
             rw = rw.coerceIn(minPx, webW); rh = rh.coerceIn(minPx, root.height.toFloat())
