@@ -71,6 +71,10 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        // 카메라 컷아웃(펀치홀/노치) 영역까지 화면을 사용 — 전체화면 시 상단 검은 띠 제거
+        if (Build.VERSION.SDK_INT >= 28) {
+            window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
+        }
         setContentView(R.layout.activity_main)
         prefs = getSharedPreferences("cv", MODE_PRIVATE)
         web = findViewById(R.id.web); urlInput = findViewById(R.id.urlInput)
@@ -283,6 +287,23 @@ class MainActivity : Activity() {
     private var touchEndAt = 0L
     /** 손가락 스크롤(드래그/플링 관성 포함)인지 — 레이아웃 변화·코드 스크롤로 인한 가짜 '위로 스크롤'을 걸러냄 */
     private fun userScrolling() = touching || System.currentTimeMillis() - touchEndAt < 1500
+    /** 창 포커스를 되찾을 때(다이얼로그/알림창 등 이후) 시스템 바가 다시 나타나 있으면 숨김 상태를 복원 */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && full) applySystemBars(true)
+    }
+    private fun applySystemBars(hide: Boolean) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.let {
+                if (hide) { it.hide(WindowInsets.Type.systemBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
+                else it.show(WindowInsets.Type.systemBars())
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (hide) (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE) else View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
     private fun setFull(v: Boolean) {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
@@ -311,16 +332,7 @@ class MainActivity : Activity() {
             })
             start()
         }
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.let {
-                if (v) { it.hide(WindowInsets.Type.systemBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
-                else it.show(WindowInsets.Type.systemBars())
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (v) (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE) else View.SYSTEM_UI_FLAG_VISIBLE
-        }
+        applySystemBars(v)
     }
 
     private var atBottomShown = false
