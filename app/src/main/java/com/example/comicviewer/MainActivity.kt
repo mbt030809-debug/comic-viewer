@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private var keepOn get() = prefs.getBoolean("keepOn", true); set(v) = prefs.edit().putBoolean("keepOn", v).apply()
     private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
+    private var autoWaitScale get() = prefs.getBoolean("autoWaitScale", false); set(v) = prefs.edit().putBoolean("autoWaitScale", v).apply() // 경계 때문에 덜 이동했으면 대기도 그 비율만큼 단축
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
@@ -487,7 +488,8 @@ class MainActivity : Activity() {
         return topBar.measuredHeight
     }
 
-    private fun pageScroll(dir: Int) {
+    /** onDecided(이동 비율(0~1, 설정 이동 거리 대비 실제), 이동 시간 ms): 실제 이동이 정해진 시점에 호출(자동 방식2 대기 계산용) */
+    private fun pageScroll(dir: Int, onDecided: ((Float, Int) -> Unit)? = null) {
         // 메뉴 상태가 바뀐 뒤의 최종 웹뷰 높이를 setFull 호출 전에 계산(setFull이 여백을 즉시 바꾸므로)
         val wasFull = full
         val finalH = if (editMode) web.height
@@ -497,11 +499,12 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
-        if (!snapImg) { animateScroll(dist); return }
+        if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, smoothMs); return }
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH)
             // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
             val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8) // 여백(멈춤 아래/건너뜀 위)을 포함한 실제 이동 거리에 비례, 하한·상한은 거의 두지 않아 속도가 일정
-            animateScroll(d ?: dist, ms) }
+            animateScroll(d ?: dist, ms)
+            onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), ms) }
     }
 
     private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
@@ -710,8 +713,10 @@ class MainActivity : Activity() {
                 if (autoNext) { armResume(); goNext() }
                 return
             }
-            pageScroll(1)
-            handler.postDelayed(this, autoWait * 100L + smoothMs)
+            pageScroll(1) { ratio, ms -> // 설정 거리만큼 이동했으면 설정 대기, 경계로 덜 이동했으면(옵션) 줄어든 비율만큼 덜 대기
+                val wait = autoWait * 100L * (if (autoWaitScale) ratio else 1f)
+                handler.postDelayed(this, wait.toLong() + ms)
+            }
         }
     }
 
@@ -945,6 +950,7 @@ class MainActivity : Activity() {
                 override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
             })
         })
+        sw("경계 이동은 대기 단축", autoWaitScale) { autoWaitScale = it }
         sw("끝에서 다음화", autoNext) { autoNext = it }
 
         group("경계")
