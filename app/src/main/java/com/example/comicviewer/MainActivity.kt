@@ -90,7 +90,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
         }
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF111111.toInt())) // 시스템 바 뒤/가장자리가 회색으로 보이지 않게
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF000000.toInt())) // 시스템 바 뒤/가장자리가 회색으로 보이지 않게
         setContentView(R.layout.activity_main)
         setupEdgeToEdge()
         prefs = getSharedPreferences("cv", MODE_PRIVATE)
@@ -1047,7 +1047,7 @@ function collapse(e){e.style.display='none';var hs=[e];e.__cvhs=hs;var p=e.paren
 function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
 function build(){
  var st=mk('style','cv-style');
- st.textContent='body>*:not(#cv-root):not(#cv-spacer):not(.cv-keep){display:none!important}html,body{margin:0!important;padding:0!important;background:#111!important;overflow:visible!important;height:auto!important;position:static!important;transform:none!important}#cv-root{position:fixed;top:0;height:100vh;z-index:2147483000;display:flex;background:#111;overflow:hidden}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
+ st.textContent='body>*:not(#cv-root):not(#cv-spacer):not(.cv-keep){display:none!important}html,body{margin:0!important;padding:0!important;background:#000!important;overflow:visible!important;height:auto!important;position:static!important;transform:none!important}#cv-root{position:fixed;top:0;height:100vh;z-index:2147483000;display:flex;background:#000;overflow:hidden}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
  document.head.appendChild(st);
  root=mk('div','cv-root');root.style.pointerEvents=exMode?'auto':'none';
  for(var k=0;k<2;k++){var p=mk('div',null,'cv-pane'),s=mk('div',null,'cv-strip');p.appendChild(s);root.appendChild(p);strips.push(s);}
