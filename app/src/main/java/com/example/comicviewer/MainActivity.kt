@@ -59,7 +59,6 @@ class MainActivity : Activity() {
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
-    private var skipMs get() = prefs.getInt("skipMs", 600); set(v) = prefs.edit().putInt("skipMs", v).apply() // 경계 건너뜀 이동 시간
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var snapWasSkip = false // 마지막 computeSnap 결과가 '건너뜀' 이동인지
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
@@ -512,7 +511,10 @@ class MainActivity : Activity() {
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); return }
-        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH); animateScroll(d ?: dist, if (d != null && snapWasSkip) skipMs else smoothMs) }
+        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH)
+            // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
+            val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(smoothMs / 4, smoothMs * 4)
+            animateScroll(d ?: dist, ms) }
     }
 
     private fun animateScroll(dist: Int, ms: Int = smoothMs) {
@@ -935,7 +937,6 @@ class MainActivity : Activity() {
         group("경계")
         sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
         sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
-        bar("건너뜀 시간", 0, 3000, skipMs, { if (it == 0) "즉시" else "${it}ms" }) { skipMs = it / 100 * 100 }
         bar("건너뜀 위 여백", 0, 30, skipTopPct, { "$it%" }) { skipTopPct = it }
         bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
         bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
