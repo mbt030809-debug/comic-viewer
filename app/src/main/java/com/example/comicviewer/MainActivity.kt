@@ -60,7 +60,7 @@ class MainActivity : Activity() {
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
     private var skipMs get() = prefs.getInt("skipMs", 600); set(v) = prefs.edit().putInt("skipMs", v).apply() // 경계 건너뜀 이동 시간
-    private var skipMargin get() = prefs.getInt("skipMargin", 40); set(v) = prefs.edit().putInt("skipMargin", v).apply() // 건너뛴 뒤 띠를 남겨 보여줄 여유(dp): 이미지 윗부분 잘림 방지
+    private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var snapWasSkip = false // 마지막 computeSnap 결과가 '건너뜀' 이동인지
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
@@ -658,10 +658,10 @@ class MainActivity : Activity() {
         val tol = 12f
         if (skipBand) {
             if (dist > 0) bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }?.let { b ->
-                val m = minOf(skipMargin.toFloat(), (b[1] - b[0]) / 2f) // 띠 일부를 남겨 다음 이미지 윗부분이 잘리지 않게
+                val m = skipTopPct / 100f * hCss // 화면 높이의 N%만큼 위를 비워 다음 이미지 윗부분이 카메라에 가려지지 않게
                 val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) { snapWasSkip = true; return t }
             } else bands.lastOrNull { abs(it[1] - cur) <= tol }?.let { b ->
-                val m = minOf(skipMargin.toFloat(), (b[1] - b[0]) / 2f)
+                val m = skipTopPct / 100f * hCss
                 val t = ((b[0] + m - visH - cur) * density).toInt(); if (t < -4) { snapWasSkip = true; return t } // 위로: 윗 이미지의 끝이 화면 아래에 오도록
             }
         }
@@ -936,7 +936,7 @@ class MainActivity : Activity() {
         sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
         sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
         bar("건너뜀 시간", 0, 3000, skipMs, { if (it == 0) "즉시" else "${it}ms" }) { skipMs = it / 100 * 100 }
-        bar("건너뜀 여유", 0, 200, skipMargin, { "${it}dp" }) { skipMargin = it }
+        bar("건너뜀 위 여백", 0, 30, skipTopPct, { "$it%" }) { skipTopPct = it }
         bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
         bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
         btn("영역 ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }
