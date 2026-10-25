@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply()
     private var pageRatio2 get() = prefs.getInt("ratio2", 100); set(v) = prefs.edit().putInt("ratio2", v).apply() // 두쪽 보기 1회 이동 거리(%)
     private var insetL = 0; private var insetR = 0 // 가로 모드의 노치/내비게이션 바 좌우 여백(px)
+    private var navInset = 0 // 마지막으로 확인한 하단 내비게이션 바 높이(px)
     private var barInset = 0 // 마지막으로 확인한 상태바 높이(px). 메뉴를 다시 열 때 미리 반영
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
@@ -179,6 +180,7 @@ class MainActivity : Activity() {
 
     /** 접힘↔펼침 등으로 창 너비가 바뀐 뒤(레이아웃 완료 후) 호출 */
     private fun onWidthChanged() {
+        closeRegionEditor() // 회전/접힘으로 좌표가 달라졌으므로 편집기 닫음
         applyScale()
         if (foldAutoTwo) {
             val want = expanded
@@ -188,11 +190,12 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); super.onPause() }
-    @Deprecated("") override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
+    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); web.pauseTimers(); super.onPause() }
+    override fun onResume() { super.onResume(); web.onResume(); web.resumeTimers() }
+    @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
-        KeyEvent.KEYCODE_VOLUME_DOWN -> { pageScroll(1); true }
-        KeyEvent.KEYCODE_VOLUME_UP -> { pageScroll(-1); true }
+        KeyEvent.KEYCODE_VOLUME_DOWN -> { if (e.repeatCount == 0 && regionScrim == null) pageScroll(1); true } // 길게 눌러 반복되는 키 입력은 무시(애니메이션 재시작 방지)
+        KeyEvent.KEYCODE_VOLUME_UP -> { if (e.repeatCount == 0 && regionScrim == null) pageScroll(-1); true }
         else -> super.onKeyDown(k, e)
     }
 
@@ -354,7 +357,9 @@ class MainActivity : Activity() {
             (track.layoutParams as FrameLayout.LayoutParams).let { if (it.bottomMargin != bottom + (16 * density).toInt() || it.rightMargin != right) { it.bottomMargin = bottom + (16 * density).toInt(); it.rightMargin = right; track.layoutParams = it } }
             (nextBtn.layoutParams as FrameLayout.LayoutParams).let { val nb = bottom + (24 * density).toInt(); if (it.bottomMargin != nb) { it.bottomMargin = nb; nextBtn.layoutParams = it } }
             val bar = findViewById<View>(R.id.topBar)
-            if (top > 0) barInset = top
+            if (Build.VERSION.SDK_INT >= 30) { if (insets.isVisible(WindowInsets.Type.statusBars())) barInset = insets.getInsets(WindowInsets.Type.statusBars()).top }
+            else if (!full && top > 0) barInset = top
+            if (bottom > 0) navInset = bottom
             if (bar.paddingTop != top) bar.setPadding(0, top, 0, 0)
             val lp = web.layoutParams as FrameLayout.LayoutParams
             if (lp.bottomMargin != bottom) { lp.bottomMargin = bottom; web.layoutParams = lp }
@@ -470,12 +475,15 @@ class MainActivity : Activity() {
         }
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
-            if (b && auto && autoNext) { applyAuto(false); armResume(); handler.postDelayed({ goNext() }, 1200) } }
+            if (b && auto && autoNext) { applyAuto(false); armResume(); handler.postDelayed({ if (resumeAuto) goNext() }, 1200) } }
         if (saving && curKey != null) { handler.removeCallbacks(saveRun); handler.postDelayed(saveRun, 800) }
     }
 
     // ---- 다음화 ----
+    private var lastNextAt = 0L
     private fun goNext() {
+        if (System.currentTimeMillis() - lastNextAt < 3000) return // 연속 호출로 두 화를 건너뛰는 것 방지
+        lastNextAt = System.currentTimeMillis()
         nextBtn.visibility = View.GONE
         web.evaluateJavascript("window.__cvNext?window.__cvNext(true):''") { r ->
             if (r == null || r == "\"\"" || r == "null") { resumeAuto = false; Toast.makeText(this, "다음화 없음", Toast.LENGTH_SHORT).show() }
@@ -483,11 +491,22 @@ class MainActivity : Activity() {
     }
 
     // ---- 스크롤 ----
+    /** 메뉴를 열었을 때의 높이(상태바 포함) */
+    private fun menuHeightPx(): Int {
+        topBar.setPadding(0, barInset, 0, 0)
+        topBar.measure(View.MeasureSpec.makeMeasureSpec(if (rootW > 0) rootW else resources.displayMetrics.widthPixels, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        return topBar.measuredHeight
+    }
+
     private fun pageScroll(dir: Int) {
+        // 메뉴 상태가 바뀐 뒤의 최종 웹뷰 높이를 setFull 호출 전에 계산(setFull이 여백을 즉시 바꾸므로)
+        val wasFull = full
+        val finalH = if (editMode) web.height
+            else if (dir > 0 && !wasFull) web.height + (web.layoutParams as FrameLayout.LayoutParams).let { it.topMargin + it.bottomMargin } // 메뉴·시스템바가 숨겨져 높이가 늘어남
+            else if (dir < 0 && wasFull) (web.height - menuHeightPx() - navInset).coerceAtLeast(1) // 메뉴가 다시 나와 높이가 줄어듦
+            else web.height
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
-        // 메뉴가 숨겨지는 이동이면 애니메이션이 끝난 뒤의 높이(=현재 높이+메뉴 여백)를 기준으로 거리·경계 계산
-        val finalH = web.height + (if (dir > 0 && !editMode) (web.layoutParams as FrameLayout.LayoutParams).let { it.topMargin + it.bottomMargin } else 0)
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); return }
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist, finalH) ?: dist) }
@@ -512,6 +531,8 @@ class MainActivity : Activity() {
      * 가로 위치/길이는 웹페이지 너비 대비 %, 세로 길이는 dp(=검은 띠 최소 높이)로 저장.
      */
     private var settingsDlg: AlertDialog? = null
+    private var regionScrim: View? = null
+    private fun closeRegionEditor(): Boolean { val v = regionScrim ?: return false; (v.parent as? ViewGroup)?.removeView(v); regionScrim = null; return true }
     @SuppressLint("ClickableViewAccessibility")
     private fun showRegionEditor() {
         val root = findViewById<FrameLayout>(R.id.root)
@@ -536,7 +557,7 @@ class MainActivity : Activity() {
             rw = rw.coerceIn(minPx, webW); rh = rh.coerceIn(minPx, root.height.toFloat())
             rl = rl.coerceIn(webL, webL + webW - rw); rt = rt.coerceIn(0f, root.height - rh)
         }
-        scrim.addView(rect); apply()
+        clamp(); scrim.addView(rect); apply()
         val hs = (44 * density).toInt()
         fun drag(v: View, onMove: (dx: Float, dy: Float, l: Float, t: Float, w: Float, h: Float) -> Unit) {
             var sx = 0f; var sy = 0f; var l0 = 0f; var t0 = 0f; var w0 = 0f; var h0 = 0f
@@ -557,8 +578,8 @@ class MainActivity : Activity() {
             rect.addView(h, lp)
             drag(h) { dx, dy, l, t, w, hh ->
                 // 서쪽/북쪽 핸들은 반대편 변을 고정하고 이 변만 이동(최소 크기·경계 안에서)
-                if (c[1] == 'e') rw = w + dx else { val r = l + w; rl = (l + dx).coerceIn(webL, r - minPx); rw = r - rl }
-                if (c[0] == 's') rh = hh + dy else { val b = t + hh; rt = (t + dy).coerceIn(0f, b - minPx); rh = b - rt }
+                if (c[1] == 'e') rw = w + dx else { val r = l + w; rl = (l + dx).coerceIn(webL, maxOf(webL, r - minPx)); rw = r - rl }
+                if (c[0] == 's') rh = hh + dy else { val b = t + hh; rt = (t + dy).coerceIn(0f, maxOf(0f, b - minPx)); rh = b - rt }
             }
         }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(0xEE222222.toInt()) }
@@ -570,12 +591,13 @@ class MainActivity : Activity() {
             blackW = (rw / webW * 100f).toInt().coerceIn(10, 100)
             blackH = (rh / density).toInt().coerceIn(10, 300)
             analyzer.clear(); scheduleAnalysis()
-            root.removeView(scrim)
+            closeRegionEditor()
             Toast.makeText(this@MainActivity, "영역 ${blackL}% · ${blackW}% · ${blackH}dp", Toast.LENGTH_SHORT).show()
         } })
-        bar.addView(Button(this).apply { text = "취소"; setOnClickListener { root.removeView(scrim) } })
+        bar.addView(Button(this).apply { text = "취소"; setOnClickListener { closeRegionEditor() } })
         scrim.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (56 * density).toInt(), Gravity.BOTTOM).apply { bottomMargin = (web.layoutParams as FrameLayout.LayoutParams).bottomMargin })
         root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        regionScrim = scrim
     }
 
     // ---- 검은 경계 멈춤: 이미지를 미리 내려받아 분석한 검은 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
@@ -924,8 +946,10 @@ class MainActivity : Activity() {
         sw("도메인 차단", adblock) { adblock = it }
         btn("광고 제거") {
             settingsDlg?.dismiss()
-            injectScript(); setFull(true)
-            web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
+            handler2.postDelayed({ // 닫힘 리스너(변경 적용/새로고침)가 먼저 끝난 뒤 실행
+                injectScript(); setFull(true)
+                web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
+            }, 400)
         }
         btn("두쪽 진단") {
             web.evaluateJavascript("window.__cvInfo?window.__cvInfo():'스크립트 미실행'") { r ->
@@ -933,6 +957,7 @@ class MainActivity : Activity() {
                     .setMessage((r ?: "").trim('"').replace("\\u003C", "<")).setPositiveButton("확인", null).show()
             }
         }
+        box.isFocusableInTouchMode = true; box.descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS; box.requestFocus() // 처음 포커스가 입력칸으로 가서 아래로 스크롤되는 것 방지
         val sv = ScrollView(this).apply { addView(box) }
         val dlg = AlertDialog.Builder(this).setTitle("설정 v" + packageManager.getPackageInfo(packageName, 0).versionName).setView(sv).setPositiveButton("확인", null).create()
         dlg.setOnDismissListener { // 확인/바깥 터치/뒤로가기/다른 편집기로 전환 등 어떤 경로로 닫아도 변경 사항 적용
@@ -983,12 +1008,12 @@ function sweep(){swept=1;var st=box('cv-diag','bottom:0;background:#c00');st.tex
  var y=0,n=0;(function step(){var H=window.innerHeight;window.scrollTo(0,y);y+=H*0.8;n++;
   if(y<document.documentElement.scrollHeight&&n<30)setTimeout(step,200);
   else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},800)})();}
-function collapse(e){e.style.display='none';var p=e.parentElement;
+function collapse(e){e.style.display='none';var hs=[e];e.__cvhs=hs;var p=e.parentElement;
  while(p&&p!==document.body&&p!==document.documentElement&&!p.closest('.cv-keep')){
   var vis=[].some.call(p.children,function(c){if(c===e||c.style.display==='none'||getComputedStyle(c).display==='none')return false;
    return c.offsetHeight>0||/^(IMG|IFRAME|CANVAS|VIDEO)$/.test(c.tagName)||!!c.querySelector('img,iframe,canvas,video')});
   var txt=[].some.call(p.childNodes,function(n){return n.nodeType==3&&n.textContent.trim()});
-  if(vis||txt)break;p.style.display='none';p=p.parentElement}}
+  if(vis||txt)break;p.style.display='none';hs.push(p);p=p.parentElement}}
 function mk(t,id,c){var d=document.createElement(t);if(id)d.id=id;if(c)d.className=c;return d}
 function build(){
  var st=mk('style','cv-style');
@@ -1033,7 +1058,7 @@ function tick0(){
   var ex=r.urls.indexOf(key(i.currentSrc||i.src))>=0||r.idx.indexOf(k)>=0;i.__cvx=ex;
   if(o.two)return;
   if(ex){if(!i.__cvhid){collapse(i);i.__cvhid=1}return}
-  if(i.__cvhid){i.style.display='';i.__cvhid=0}
+  if(i.__cvhid){(i.__cvhs||[i]).forEach(function(el){el.style.display=''});i.__cvhid=0}
  });
  if(!o.two)return;
  if(root){var live={};imgs.forEach(function(i){live[i.__cvi]=1});strips.forEach(function(s){[].slice.call(s.children).forEach(function(c){if(!live[c.__cvi])c.remove()})})}
