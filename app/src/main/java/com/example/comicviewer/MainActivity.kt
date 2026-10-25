@@ -50,6 +50,8 @@ class MainActivity : Activity() {
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
     private var pageRatio get() = prefs.getInt("ratio", 95); set(v) = prefs.edit().putInt("ratio", v).apply()
     private var pageRatio2 get() = prefs.getInt("ratio2", 100); set(v) = prefs.edit().putInt("ratio2", v).apply() // 두쪽 보기 1회 이동 거리(%)
+    private var insetL = 0; private var insetR = 0 // 가로 모드의 노치/내비게이션 바 좌우 여백(px)
+    private var barInset = 0 // 마지막으로 확인한 상태바 높이(px). 메뉴를 다시 열 때 미리 반영
     private var quietUntil = 0L // 두쪽 보기 준비(스윕) 중에는 스크롤 이벤트로 저장/전체화면/다음화 판단 안 함
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
@@ -156,7 +158,7 @@ class MainActivity : Activity() {
         nextBtn.setOnClickListener { goNext() }
         findViewById<View>(R.id.editBtn).setOnClickListener {
             editMode = !editMode; applyEditVisual()
-            if (editMode) Toast.makeText(this, "우측 버튼을 드래그해 옮기세요. 편집 버튼을 다시 누르면 종료", Toast.LENGTH_LONG).show()
+            if (editMode) Toast.makeText(this, "버튼을 끌어 이동", Toast.LENGTH_SHORT).show()
         }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
@@ -309,7 +311,7 @@ class MainActivity : Activity() {
         val rw = if (rootW > 0) rootW else resources.displayMetrics.widthPixels
         val m = (rw * (100 - imgScale) / 200f).toInt()
         val lp = web.layoutParams as FrameLayout.LayoutParams
-        if (lp.leftMargin != m || lp.rightMargin != m) { lp.leftMargin = m; lp.rightMargin = m; web.layoutParams = lp }
+        if (lp.leftMargin != m + insetL || lp.rightMargin != m + insetR) { lp.leftMargin = m + insetL; lp.rightMargin = m + insetR; web.layoutParams = lp }
     }
     private fun applyBtnAlpha() { floatBtns().forEach { it.alpha = btnAlpha / 100f } }
     private fun updateTwoBtn() { twoBtn.text = if (two) "두쪽●" else "두쪽" }
@@ -345,10 +347,14 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
         else window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
         rootV.setOnApplyWindowInsetsListener { _, insets ->
-            val top: Int; val bottom: Int
-            if (Build.VERSION.SDK_INT >= 30) { val b = insets.getInsets(WindowInsets.Type.systemBars()); top = b.top; bottom = b.bottom }
-            else { top = insets.systemWindowInsetTop; bottom = insets.systemWindowInsetBottom }
+            val top: Int; val bottom: Int; val left: Int; val right: Int
+            if (Build.VERSION.SDK_INT >= 30) { val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()); top = b.top; bottom = b.bottom; left = b.left; right = b.right }
+            else { top = insets.systemWindowInsetTop; bottom = insets.systemWindowInsetBottom; left = insets.systemWindowInsetLeft; right = insets.systemWindowInsetRight }
+            if (insetL != left || insetR != right) { insetL = left; insetR = right; applyScale() }
+            (track.layoutParams as FrameLayout.LayoutParams).let { if (it.bottomMargin != bottom + (16 * density).toInt() || it.rightMargin != right) { it.bottomMargin = bottom + (16 * density).toInt(); it.rightMargin = right; track.layoutParams = it } }
+            (nextBtn.layoutParams as FrameLayout.LayoutParams).let { val nb = bottom + (24 * density).toInt(); if (it.bottomMargin != nb) { it.bottomMargin = nb; nextBtn.layoutParams = it } }
             val bar = findViewById<View>(R.id.topBar)
+            if (top > 0) barInset = top
             if (bar.paddingTop != top) bar.setPadding(0, top, 0, 0)
             val lp = web.layoutParams as FrameLayout.LayoutParams
             if (lp.bottomMargin != bottom) { lp.bottomMargin = bottom; web.layoutParams = lp }
@@ -374,6 +380,7 @@ class MainActivity : Activity() {
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
         // 메뉴 표시/숨김 애니메이션(300ms, One UI 유사 곡선): 메뉴가 나오면 웹페이지가 아래로 밀리고, 숨기면 위로 올라옴
+        if (!v) topBar.setPadding(0, barInset, 0, 0) // 메뉴를 열면 상태바도 다시 나오므로 그 높이를 미리 포함
         run { // 숨김(GONE) 상태의 이전 높이가 낡았을 수 있어 항상 다시 측정
             topBar.measure(View.MeasureSpec.makeMeasureSpec(if (rootW > 0) rootW else resources.displayMetrics.widthPixels, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
@@ -401,6 +408,7 @@ class MainActivity : Activity() {
                 override fun onAnimationEnd(a: android.animation.Animator) {
                     web.translationY = 0f
                     if (!cancelled && full) topBar.visibility = View.GONE
+                    else if (!cancelled && topBar.height > 0) { val p3 = web.layoutParams as FrameLayout.LayoutParams; if (p3.topMargin != topBar.height) { p3.topMargin = topBar.height; web.layoutParams = p3 } }
                 }
             })
             start()
@@ -470,7 +478,7 @@ class MainActivity : Activity() {
     private fun goNext() {
         nextBtn.visibility = View.GONE
         web.evaluateJavascript("window.__cvNext?window.__cvNext(true):''") { r ->
-            if (r == null || r == "\"\"" || r == "null") { resumeAuto = false; Toast.makeText(this, "다음화 링크를 찾지 못했습니다", Toast.LENGTH_SHORT).show() }
+            if (r == null || r == "\"\"" || r == "null") { resumeAuto = false; Toast.makeText(this, "다음화 없음", Toast.LENGTH_SHORT).show() }
         }
     }
 
@@ -479,7 +487,7 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         // 메뉴가 숨겨지는 이동이면 애니메이션이 끝난 뒤의 높이(=현재 높이+메뉴 여백)를 기준으로 거리·경계 계산
-        val finalH = web.height + (if (dir > 0 && !editMode) (web.layoutParams as FrameLayout.LayoutParams).topMargin else 0)
+        val finalH = web.height + (if (dir > 0 && !editMode) (web.layoutParams as FrameLayout.LayoutParams).let { it.topMargin + it.bottomMargin } else 0)
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); return }
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist, finalH) ?: dist) }
@@ -519,8 +527,10 @@ class MainActivity : Activity() {
         val minPx = 20 * density
         var rl = webL + webW * blackL / 100f; var rw = webW * blackW / 100f
         var rh = blackH * density; var rt = (root.height - rh) / 2f
+        lateinit var infoRef: TextView
         fun apply() {
             val lp = FrameLayout.LayoutParams(rw.toInt(), rh.toInt()); lp.leftMargin = rl.toInt(); lp.topMargin = rt.toInt(); rect.layoutParams = lp
+            if (::infoRef.isInitialized) infoRef.text = "${((rl - webL) / webW * 100).toInt().coerceIn(0, 100)}% · ${(rw / webW * 100).toInt().coerceIn(0, 100)}% · ${(rh / density).toInt()}dp"
         }
         fun clamp() {
             rw = rw.coerceIn(minPx, webW); rh = rh.coerceIn(minPx, root.height.toFloat())
@@ -552,18 +562,19 @@ class MainActivity : Activity() {
             }
         }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(0xEE222222.toInt()) }
-        val info = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); setPadding(24, 0, 24, 0); text = if (two) "왼쪽 칸 기준으로 지정: 끌어 이동 / 모서리로 크기" else "사각형을 끌어 이동 / 모서리 원으로 크기 조절"; gravity = Gravity.CENTER_VERTICAL }
+        val info = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); setPadding(24, 0, 24, 0); gravity = Gravity.CENTER_VERTICAL }
+        infoRef = info; apply()
         bar.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        bar.addView(Button(this).apply { text = "적용"; setOnClickListener {
+        bar.addView(Button(this).apply { text = "확인"; setOnClickListener {
             blackL = ((rl - webL) / webW * 100f).toInt().coerceIn(0, 90)
             blackW = (rw / webW * 100f).toInt().coerceIn(10, 100)
             blackH = (rh / density).toInt().coerceIn(10, 300)
             analyzer.clear(); scheduleAnalysis()
             root.removeView(scrim)
-            Toast.makeText(this@MainActivity, "판정 영역: 가로 위치 ${blackL}% / 길이 ${blackW}% / 세로 ${blackH}dp", Toast.LENGTH_LONG).show()
+            Toast.makeText(this@MainActivity, "영역 ${blackL}% · ${blackW}% · ${blackH}dp", Toast.LENGTH_SHORT).show()
         } })
         bar.addView(Button(this).apply { text = "취소"; setOnClickListener { root.removeView(scrim) } })
-        scrim.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (56 * density).toInt(), Gravity.BOTTOM))
+        scrim.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (56 * density).toInt(), Gravity.BOTTOM).apply { bottomMargin = (web.layoutParams as FrameLayout.LayoutParams).bottomMargin })
         root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
@@ -775,11 +786,11 @@ class MainActivity : Activity() {
 
     private fun showHistory() {
         val l = loadSeries().sortedByDescending { it.time }.toMutableList()
-        if (l.isEmpty()) { Toast.makeText(this, "기록 없음 (제목에 'N화'가 있는 페이지만 기록)", Toast.LENGTH_LONG).show(); return }
+        if (l.isEmpty()) { Toast.makeText(this, "기록 없음", Toast.LENGTH_SHORT).show(); return }
         val fmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.KOREA)
         fun label(s: Series) = "${s.name}\n마지막 ${s.last}화 · 최대 ${s.max}화 · 읽은 화 ${s.eps.size}개 · ${fmt.format(java.util.Date(s.time))}"
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, l.map { label(it) }.toMutableList())
-        val dlg = AlertDialog.Builder(this).setTitle("최근 기록 (길게 눌러 삭제)")
+        val dlg = AlertDialog.Builder(this).setTitle("기록")
             .setAdapter(ad) { _, i -> if (l[i].url.isNotEmpty()) go(l[i].url) }
             .setNegativeButton("닫기", null).create()
         dlg.show()
@@ -805,9 +816,9 @@ class MainActivity : Activity() {
     private fun showBookmarks() {
         val list = loadBookmarks()
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, list.map { it.first }.toMutableList())
-        val dlg = AlertDialog.Builder(this).setTitle("북마크 (길게 눌러 삭제)")
+        val dlg = AlertDialog.Builder(this).setTitle("북마크")
             .setAdapter(ad) { _, i -> go(list[i].second) }
-            .setPositiveButton("현재 페이지 추가") { _, _ ->
+            .setPositiveButton("추가") { _, _ ->
                 val u = web.url ?: return@setPositiveButton
                 val t = web.title?.takeIf { it.isNotBlank() } ?: u
                 val parsed = parseTitle(t)
@@ -815,8 +826,8 @@ class MainActivity : Activity() {
                 // 같은 웹툰(이름 동일)이면 덮어쓰기. 주소가 바뀌어도 이름으로 식별
                 val key = parsed?.let { norm(it.first) }
                 val idx = list.indexOfFirst { b -> b.second == u || (key != null && parseTitle(b.first)?.let { norm(it.first) } == key) }
-                if (idx >= 0) { list[idx] = label to u; Toast.makeText(this, "북마크 덮어쓰기: $label", Toast.LENGTH_SHORT).show() }
-                else { list.add(label to u); Toast.makeText(this, "북마크 추가: $label", Toast.LENGTH_SHORT).show() }
+                if (idx >= 0) { list[idx] = label to u; Toast.makeText(this, "덮어씀 · $label", Toast.LENGTH_SHORT).show() }
+                else { list.add(label to u); Toast.makeText(this, "추가 · $label", Toast.LENGTH_SHORT).show() }
                 saveBookmarks(list)
             }
             .setNegativeButton("닫기", null).create()
@@ -832,64 +843,55 @@ class MainActivity : Activity() {
     // ---- 설정 ----
     private fun showSettings() {
         val pad = (16 * density).toInt()
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, 0, pad, pad) }
         var needInject = false; var needReload = false
-        fun head(t: String) = box.addView(TextView(this).apply { text = "\n$t"; setTypeface(null, android.graphics.Typeface.BOLD) })
-        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = box.addView(Switch(this).apply { text = t; isChecked = v; setOnCheckedChangeListener { _, c -> f(c) } })
+        val dp = { v: Int -> (v * density).toInt() }
+        fun group(t: String) {
+            box.addView(View(this).apply { setBackgroundColor(0x33888888) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { topMargin = dp(18) })
+            box.addView(TextView(this).apply { text = t; textSize = 12f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(8), 0, 0) })
+        }
+        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = box.addView(Switch(this).apply { text = t; isChecked = v; setPadding(0, dp(6), 0, dp(6)); setOnCheckedChangeListener { _, c -> f(c) } })
         fun bar(t: String, min: Int, max: Int, v: Int, fmt: (Int) -> String, f: (Int) -> Unit) {
-            val l = TextView(this).apply { text = t + fmt(v) }
-            box.addView(l)
+            val name = TextView(this).apply { text = t }
+            val value = TextView(this).apply { text = fmt(v); setTextColor(0xFF888888.toInt()) }
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
+            row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); row.addView(value)
+            box.addView(row)
             box.addView(SeekBar(this).apply {
                 this.max = max - min; progress = v - min
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(s: SeekBar, p: Int, u: Boolean) { l.text = t + fmt(p + min); f(p + min) }
-                    override fun onStartTrackingTouch(s: SeekBar) {}
-                    override fun onStopTrackingTouch(s: SeekBar) {}
+                    override fun onProgressChanged(sb: SeekBar, p: Int, u: Boolean) { value.text = fmt(p + min); f(p + min) }
+                    override fun onStartTrackingTouch(sb: SeekBar) {}
+                    override fun onStopTrackingTouch(sb: SeekBar) {}
                 })
             })
         }
-        head("[보기]")
-        sw("두쪽 보기", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
-        sw("오른쪽→왼쪽 (오른쪽이 윗부분)", rtl) { rtl = it; needInject = true }
-        bar("두쪽 중간 여백 ", 0, 60, gap, { "${it}px" }) { gap = it; needInject = true }
-        bar("이미지 너비 [현재 화면: ${if (expanded) "펼침" else "접힘"}] ", 30, 100, imgScale, { "$it%" }) { imgScale = it; applyScale() }
-        sw("펼침 화면에서 자동으로 두쪽 보기 (접으면 해제)", foldAutoTwo) { foldAutoTwo = it }
-        head("[화면]")
-        sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
-        bar("우측 버튼 크기 ", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
-        bar("우측 버튼 불투명도 ", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
-        head("[▲▼ 버튼 / 볼륨키]")
-        bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
-        bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
-        sw("경계 멈춤: 이미지 사이 단색 영역(검정/흰색 등)이 보이기 직전 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
-        sw("경계에서 멈춘 뒤 다음 이동은 경계를 건너뛰어 다음 이미지 맨 위로", skipBand) { skipBand = it }
-        bar("무시 구간 (이동 거리의 이 % 이내에서 시작되는 단색 띠는 무시) ", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
-        box.addView(TextView(this).apply { text = "단색 판정 영역: 가로 위치 ${blackL}% / 가로 길이 ${blackW}% / 세로 길이 ${blackH}dp" })
-        box.addView(Button(this).apply {
-            text = "단색 판정 영역 지정 (사각형을 끌어서 조절 - 워터마크는 영역 밖으로)"
-            setOnClickListener { settingsDlg?.dismiss(); showRegionEditor() }
-        })
-        bar("같은 색으로 볼 색상 차이 허용 (클수록 비슷한 색도 단색으로 취급) ", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
-        box.addView(Button(this).apply {
-            text = "분석 상태 확인"
-            setOnClickListener {
-                web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-                    val p = parseImgs(r)
-                    val n = p?.second?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
-                    val total = p?.second?.size ?: 0
-                    val bands = if (p != null) bandsOf(p.first, p.second).size else 0
-                    Toast.makeText(this@MainActivity, "이미지 $total 장 중 분석 완료 ${n}장 / 단색 띠 ${bands}개 (높이 ${blackH}dp 이상)", Toast.LENGTH_LONG).show()
-                }
-            }
-        })
-        bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
-        bar("▼ 꾹 누름 연속 스크롤 속도 ", 100, 5000, holdSpeed, { "${it}px/초" }) { holdSpeed = it / 50 * 50 }
-        box.addView(Button(this).apply { text = "버튼 위치 초기화 (이동은 상단 메뉴 '편집')"; setOnClickListener { resetBtnPositions() } })
-        head("[자동 버튼: 계속 흐르는 스크롤]")
-        sw("자동 방식2: 1페이지 이동 후 대기를 반복 (끄면 연속 스크롤)", autoPageMode) { autoPageMode = it }
-        bar("[방식1: 연속] 속도 ", 20, 2000, autoSpeed, { "${it}px/초" }) { autoSpeed = it / 10 * 10 }
-        box.addView(TextView(this).apply { text = "[방식2] 1페이지 이동 후 대기 시간(초, 예: 2.3)" })
+        fun btn(t: String, onClick: (Button) -> Unit) = box.addView(Button(this).apply { text = t; isAllCaps = false; setOnClickListener { onClick(this) } })
+
+        group("보기")
+        sw("두쪽", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
+        sw("오른쪽 → 왼쪽", rtl) { rtl = it; needInject = true }
+        bar("여백", 0, 60, gap, { "${it}px" }) { gap = it; needInject = true }
+        bar(if (expanded) "이미지 너비 · 펼침" else "이미지 너비 · 접힘", 30, 100, imgScale, { "$it%" }) { imgScale = it; applyScale() }
+        sw("펼치면 두쪽", foldAutoTwo) { foldAutoTwo = it }
+
+        group("화면")
+        sw("켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
+        bar("버튼 크기", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
+        bar("버튼 투명도", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
+        btn("버튼 위치 초기화") { resetBtnPositions() }
+
+        group("이동")
+        bar("거리", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
+        bar("거리 · 두쪽", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
+        bar("시간", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
+        bar("꾹 누름 속도", 100, 5000, holdSpeed, { "${it}px/s" }) { holdSpeed = it / 50 * 50 }
+
+        group("자동")
+        sw("페이지 단위", autoPageMode) { autoPageMode = it }
+        bar("속도", 20, 2000, autoSpeed, { "${it}px/s" }) { autoSpeed = it / 10 * 10 }
         box.addView(EditText(this).apply {
+            hint = "대기 (초)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             setText(String.format(java.util.Locale.US, "%.1f", autoWait / 10f))
             addTextChangedListener(object : android.text.TextWatcher {
@@ -900,33 +902,43 @@ class MainActivity : Activity() {
                 override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
             })
         })
-        sw("끝에 도달하면 다음화로 자동 이동", autoNext) { autoNext = it }
-        box.addView(Button(this).apply {
-            text = "두쪽 보기 진단 (문제 시 결과를 알려주세요)"
-            setOnClickListener {
-                web.evaluateJavascript("window.__cvInfo?window.__cvInfo():'스크립트 미실행'") { r ->
-                    AlertDialog.Builder(this@MainActivity).setTitle("진단")
-                        .setMessage((r ?: "").trim('"').replace("\\u003C", "<")).setPositiveButton("확인", null).show()
-                }
+        sw("끝에서 다음화", autoNext) { autoNext = it }
+
+        group("경계")
+        sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
+        sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
+        bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
+        bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
+        btn("영역 ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }
+        btn("분석 상태") {
+            web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
+                val pr = parseImgs(r)
+                val n = pr?.second?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
+                val total = pr?.second?.size ?: 0
+                val bands = if (pr != null) bandsOf(pr.first, pr.second).size else 0
+                Toast.makeText(this@MainActivity, "분석 $n/$total · 띠 $bands", Toast.LENGTH_LONG).show()
             }
-        })
-        head("[광고]")
-        sw("광고 도메인 차단", adblock) { adblock = it }
-        box.addView(Button(this).apply {
-            text = "광고 제거 모드 시작 (박스 크기 조절)"
-            setOnClickListener {
-                (tag as? AlertDialog)?.dismiss()
-                injectScript(); setFull(true)
-                web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
+        }
+
+        group("광고")
+        sw("도메인 차단", adblock) { adblock = it }
+        btn("광고 제거") {
+            settingsDlg?.dismiss()
+            injectScript(); setFull(true)
+            web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
+        }
+        btn("두쪽 진단") {
+            web.evaluateJavascript("window.__cvInfo?window.__cvInfo():'스크립트 미실행'") { r ->
+                AlertDialog.Builder(this@MainActivity).setTitle("진단")
+                    .setMessage((r ?: "").trim('"').replace("\\u003C", "<")).setPositiveButton("확인", null).show()
             }
-        })
+        }
         val sv = ScrollView(this).apply { addView(box) }
-        val dlg = AlertDialog.Builder(this).setTitle("설정 (v" + packageManager.getPackageInfo(packageName, 0).versionName + ")").setView(sv).setPositiveButton("확인", null).create()
+        val dlg = AlertDialog.Builder(this).setTitle("설정 v" + packageManager.getPackageInfo(packageName, 0).versionName).setView(sv).setPositiveButton("확인", null).create()
         dlg.setOnDismissListener { // 확인/바깥 터치/뒤로가기/다른 편집기로 전환 등 어떤 경로로 닫아도 변경 사항 적용
             updateTwoBtn()
             if (needReload) web.reload() else if (needInject) injectScript()
         }
-        (box.getChildAt(box.childCount - 1) as Button).tag = dlg
         settingsDlg = dlg
         dlg.show()
     }
@@ -941,12 +953,15 @@ var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,ro
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];r.sels=r.sels||[];return r}catch(e){return {urls:[],idx:[],sels:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
-function big(i){if(i.__cvb!==undefined)return i.__cvb; // 크기가 확정된 이미지는 한 번만 판정(매번 레이아웃 계산 방지)
+function big(i){var src=i.currentSrc||i.src;
+ if(i.__cvb!==undefined&&i.__cvbs===src)return i.__cvb; // 같은 주소의 판정은 재사용(레이아웃 계산 절약). 자리표시 이미지→실제 이미지로 바뀌면 다시 판정
  var w=i.naturalWidth,h=i.naturalHeight;
  if(!w||!h)return false;
+ i.__cvbs=src;
  if(w<350||h<100||w/h>8)return(i.__cvb=false);
  var r=i.getBoundingClientRect();
- return(i.__cvb=(r.width==0||r.width>=window.innerWidth*0.6));}
+ if(r.width==0){i.__cvbs=null;return true} // 숨김/미배치 상태는 캐시하지 않음
+ return(i.__cvb=(r.width>=window.innerWidth*0.6));}
 function takeAnchor(bigs){anchorTaken=1;
  for(var n=0;n<bigs.length;n++){var r=bigs[n].getBoundingClientRect();
   if(r.bottom>1&&r.height>0){anchor={cvi:bigs[n].__cvi,frac:r.top<0?(-r.top/r.height):0};return}}
@@ -997,8 +1012,9 @@ function upd(full){if(!root)return;
  if(full!==false)spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';} // 스크롤 중에는 offsetHeight(강제 레이아웃) 읽지 않음
 function rebuild(){strips.forEach(function(s){s.innerHTML=''});
  [].forEach.call(document.images,function(i){i.__cva=0});tick();}
-var lastScroll=0;
-function tick(){if(root&&Date.now()-lastScroll<300)return; // 스크롤 중에는 무거운 점검을 건너뜀
+var lastScroll=0,lastTick=0;
+function tick(){var nw=Date.now();if(root&&nw-lastScroll<300&&nw-lastTick<1500)return; // 스크롤 중에는 건너뛰되 1.5초에 한 번은 반드시 실행
+ lastTick=nw;
  try{tick0()}catch(e){window.__cvErr=String(e&&e.message||e);if(!window.__cvErrShown){window.__cvErrShown=1;var d=box('cv-err','bottom:0;background:#c00');d.textContent='두쪽 보기 오류: '+window.__cvErr;setTimeout(function(){d.remove()},8000)}}}
 function tick0(){
  var imgs=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
@@ -1099,12 +1115,12 @@ function applyBox(mode){var b=bx.getBoundingClientRect(),r=rules(),hits=[],seen=
  saveRules(r);rebuild();return n}
 window.__cvEx=function(on){exMode=on;if(bar){bar.remove();bar=null}if(bx){bx.remove();bx=null}
  if(on){mkBox();bar=box('cv-ui','top:0;background:#c00');
-  var msg=document.createElement('div');msg.textContent='광고 제거: 빨간 박스를 광고에 맞춘 뒤 [제거] (스크롤은 박스 밖을 밀어서)';bar.appendChild(msg);
+  var msg=document.createElement('div');msg.textContent='광고에 박스를 맞추기';bar.appendChild(msg);
   var res=document.createElement('div');
-  bar.appendChild(btn('제거 (이 화)',function(){res.textContent=applyBox('url')+'개 제거'}));
-  bar.appendChild(btn('제거 (모든 화, 같은 위치)',function(){res.textContent=applyBox('pos')+'개 제거'}));
+  bar.appendChild(btn('이 화',function(){res.textContent=applyBox('url')+'개 제거'}));
+  bar.appendChild(btn('모든 화',function(){res.textContent=applyBox('pos')+'개 제거'}));
   bar.appendChild(btn('종료',function(){window.__cvEx(false)}));
-  bar.appendChild(btn('규칙 초기화',function(){saveRules({urls:[],idx:[],sels:[]});location.reload()}));
+  bar.appendChild(btn('초기화',function(){saveRules({urls:[],idx:[],sels:[]});location.reload()}));
   bar.appendChild(res);}};
 window.addEventListener('scroll',function(){lastScroll=Date.now();upd(false)},{passive:true});window.addEventListener('resize',function(){upd()});
 window.__cvTimer=setInterval(tick,800);tick();
