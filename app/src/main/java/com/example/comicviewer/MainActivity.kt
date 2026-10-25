@@ -59,6 +59,7 @@ class MainActivity : Activity() {
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
+    private var stopBottomPct get() = prefs.getInt("stopBottomPct", 5); set(v) = prefs.edit().putInt("stopBottomPct", v).apply() // 경계에서 멈출 때 화면 아래에 남길 여백(화면 높이 %)
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
     private var uaSpoof get() = prefs.getBoolean("uaSpoof", true); set(v) = prefs.edit().putBoolean("uaSpoof", v).apply() // 데스크톱 크롬형 UA 위장 사용
@@ -677,12 +678,13 @@ class MainActivity : Activity() {
         val d = abs(dist) / density
         val tol = 12f
         val m = skipTopPct / 100f * hCss // 화면 높이의 N%만큼 위를 비워 다음 이미지 윗부분이 카메라에 가려지지 않게
+        val mb = stopBottomPct / 100f * hCss // 경계에서 멈출 때 화면 아래에 남길 여백(경계 띠를 그만큼 보여줌)
         // 이미 경계 바로 앞에서 멈춘 상태라면, 다음 이동은 경계(단색 띠)를 건너뛰어 다음 이미지 맨 위가 보이게 함
         if (skipBand) {
             if (dist > 0) {
                 // 경계 뛰어넘기가 x% 이동보다 우선: (1) 경계 바로 앞에 멈춰 있거나 (2) 경계가 화면 안에 보이고 건너뛰는 이동량이 최소 y%(무시 구간) 이상이면 경계를 건너뜀
                 val minMove = (ignorePct / 100f) * d
-                val b = bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }
+                val b = bands.firstOrNull { abs(it[0] + mb - (cur + visH)) <= tol }
                     ?: bands.firstOrNull { it[0] > cur && it[0] < cur + visH - tol && (it[1] - m - cur) >= minMove }
                 if (b != null) { val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) return t }
             } else bands.lastOrNull { abs(it[1] - cur) <= tol || abs(it[1] - m - cur) <= tol }?.let { b ->
@@ -693,8 +695,8 @@ class MainActivity : Activity() {
         val landed = skipBand && bands.any { abs(it[1] - m - cur) <= tol }
         val ig = if (landed) 0f else (ignorePct / 100f) * d
         val res = if (dist > 0) {
-            val b = bands.filter { it[0] >= cur + visH + maxOf(ig, tol + 1f) && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
-            ((b[0] - visH - cur) * density).toInt()
+            val b = bands.filter { it[0] + mb >= cur + visH + maxOf(ig, tol + 1f) && it[0] + mb <= cur + visH + d }.minByOrNull { it[0] } ?: return null
+            ((b[0] + mb - visH - cur) * density).toInt()
         } else {
             val b = bands.filter { it[1] <= cur - maxOf(ig, tol + 1f) && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
             -((cur - b[1]) * density).toInt()
@@ -961,6 +963,7 @@ class MainActivity : Activity() {
 
         group("경계")
         sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
+        bar("멈춤 아래 여백", 0, 30, stopBottomPct, { "$it%" }) { stopBottomPct = it }
         sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
         bar("건너뜀 위 여백", 0, 30, skipTopPct, { "$it%" }) { skipTopPct = it }
         bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
