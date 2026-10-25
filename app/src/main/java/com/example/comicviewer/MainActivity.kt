@@ -55,6 +55,9 @@ class MainActivity : Activity() {
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
     private var blackLevel get() = prefs.getInt("blackLevel", 45); set(v) = prefs.edit().putInt("blackLevel", v).apply() // 검정으로 볼 밝기 상한(0~255)
+    private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
+    private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
+    private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
     private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
@@ -458,6 +461,70 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * 검정 판정 영역 편집기: 화면에 사각형을 띄워 드래그(이동)·모서리(크기)로 지정.
+     * 가로 위치/길이는 웹페이지 너비 대비 %, 세로 길이는 dp(=검은 띠 최소 높이)로 저장.
+     */
+    private var settingsDlg: AlertDialog? = null
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showRegionEditor() {
+        val root = findViewById<FrameLayout>(R.id.root)
+        val lpw = web.layoutParams as FrameLayout.LayoutParams
+        val webL = lpw.leftMargin.toFloat(); val webW = web.width.toFloat()
+        val scrim = FrameLayout(this).apply { setBackgroundColor(0x66000000); isClickable = true; elevation = 30f }
+        val rect = FrameLayout(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(0x44FF0000); setStroke((3 * density).toInt(), 0xFFFF3333.toInt()) }
+        }
+        val minPx = 20 * density
+        var rl = webL + webW * blackL / 100f; var rw = webW * blackW / 100f
+        var rh = blackH * density; var rt = (root.height - rh) / 2f
+        fun apply() {
+            val lp = FrameLayout.LayoutParams(rw.toInt(), rh.toInt()); lp.leftMargin = rl.toInt(); lp.topMargin = rt.toInt(); rect.layoutParams = lp
+        }
+        fun clamp() {
+            rw = rw.coerceIn(minPx, webW); rh = rh.coerceIn(minPx, root.height.toFloat())
+            rl = rl.coerceIn(webL, webL + webW - rw); rt = rt.coerceIn(0f, root.height - rh)
+        }
+        scrim.addView(rect); apply()
+        val hs = (44 * density).toInt()
+        fun drag(v: View, onMove: (dx: Float, dy: Float, l: Float, t: Float, w: Float, h: Float) -> Unit) {
+            var sx = 0f; var sy = 0f; var l0 = 0f; var t0 = 0f; var w0 = 0f; var h0 = 0f
+            v.setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; l0 = rl; t0 = rt; w0 = rw; h0 = rh }
+                    MotionEvent.ACTION_MOVE -> { onMove(e.rawX - sx, e.rawY - sy, l0, t0, w0, h0); clamp(); apply() }
+                }
+                true
+            }
+        }
+        drag(rect) { dx, dy, l, t, _, _ -> rl = l + dx; rt = t + dy }
+        listOf("nw", "ne", "sw", "se").forEach { c ->
+            val h = View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(0xFFFF3333.toInt()) } }
+            val lp = FrameLayout.LayoutParams(hs, hs)
+            lp.gravity = (if (c[0] == 'n') Gravity.TOP else Gravity.BOTTOM) or (if (c[1] == 'w') Gravity.START else Gravity.END)
+            lp.leftMargin = -hs / 3; lp.rightMargin = -hs / 3; lp.topMargin = -hs / 3; lp.bottomMargin = -hs / 3
+            rect.addView(h, lp)
+            drag(h) { dx, dy, l, t, w, hh ->
+                if (c[1] == 'e') rw = w + dx else { rl = l + dx; rw = w - dx }
+                if (c[0] == 's') rh = hh + dy else { rt = t + dy; rh = hh - dy }
+            }
+        }
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(0xEE222222.toInt()) }
+        val info = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); setPadding(24, 0, 24, 0); text = "사각형을 끌어 이동 / 모서리 원으로 크기 조절"; gravity = Gravity.CENTER_VERTICAL }
+        bar.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        bar.addView(Button(this).apply { text = "적용"; setOnClickListener {
+            blackL = ((rl - webL) / webW * 100f).toInt().coerceIn(0, 90)
+            blackW = (rw / webW * 100f).toInt().coerceIn(10, 100)
+            blackH = (rh / density).toInt().coerceIn(10, 300)
+            analyzer.clear(); scheduleAnalysis()
+            root.removeView(scrim)
+            Toast.makeText(this@MainActivity, "판정 영역: 가로 위치 ${blackL}% / 길이 ${blackW}% / 세로 ${blackH}dp", Toast.LENGTH_LONG).show()
+        } })
+        bar.addView(Button(this).apply { text = "취소"; setOnClickListener { root.removeView(scrim) } })
+        scrim.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (56 * density).toInt(), Gravity.BOTTOM))
+        root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
     // ---- 검은 경계 멈춤: 이미지를 미리 내려받아 분석한 검은 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
     private val analyzer = BandAnalyzer()
     private var analyzeTick = 0
@@ -473,7 +540,7 @@ class MainActivity : Activity() {
     private fun scheduleAnalysis() {
         if (!snapImg) return
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", blackLevel) }
+            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", blackLevel, blackL, blackW) }
         }
     }
 
@@ -481,7 +548,7 @@ class MainActivity : Activity() {
     private fun bandsOf(dark: Boolean, imgs: List<Img>): List<FloatArray> {
         val raw = ArrayList<FloatArray>()
         imgs.forEachIndexed { i, im ->
-            analyzer.cached(im.src, blackLevel)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
+            analyzer.cached(im.src, blackLevel, blackL, blackW)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
             if (dark && i + 1 < imgs.size) { val b = im.t + im.h; val n = imgs[i + 1].t; if (n - b > 0f) raw.add(floatArrayOf(b, n)) }
         }
         raw.sortBy { it[0] }
@@ -501,10 +568,10 @@ class MainActivity : Activity() {
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density
         return if (dist > 0) {
-            val b = bands.filter { it[0] >= cur + visH + 0.3f * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
+            val b = bands.filter { it[0] >= cur + visH + (ignorePct / 100f) * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
             ((b[0] - visH - cur) * density).toInt()
         } else {
-            val b = bands.filter { it[1] <= cur - 0.3f * d && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
+            val b = bands.filter { it[1] <= cur - (ignorePct / 100f) * d && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
             -((cur - b[1]) * density).toInt()
         }
     }
@@ -727,14 +794,19 @@ class MainActivity : Activity() {
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         sw("검은 경계 멈춤: 이미지를 미리 분석해 검은 띠 바로 위 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
-        bar("검은 띠로 볼 최소 높이 ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
+        bar("무시 구간 (이동 거리의 이 % 이내에서 시작되는 검은 띠는 무시) ", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
+        box.addView(TextView(this).apply { text = "검정 판정 영역: 가로 위치 ${blackL}% / 가로 길이 ${blackW}% / 세로 길이 ${blackH}dp" })
+        box.addView(Button(this).apply {
+            text = "검정 판정 영역 지정 (사각형을 끌어서 조절 - 워터마크는 영역 밖으로)"
+            setOnClickListener { settingsDlg?.dismiss(); showRegionEditor() }
+        })
         bar("검정으로 볼 밝기 기준(클수록 어두운 회색도 검정 취급) ", 5, 120, blackLevel, { "$it" }) { blackLevel = it; analyzer.clear(); scheduleAnalysis() }
         box.addView(Button(this).apply {
             text = "분석 상태 확인"
             setOnClickListener {
                 web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
                     val p = parseImgs(r)
-                    val n = p?.second?.count { analyzer.cached(it.src, blackLevel) != null } ?: 0
+                    val n = p?.second?.count { analyzer.cached(it.src, blackLevel, blackL, blackW) != null } ?: 0
                     val total = p?.second?.size ?: 0
                     val bands = if (p != null) bandsOf(p.first, p.second).size else 0
                     Toast.makeText(this@MainActivity, "이미지 $total 장 중 분석 완료 ${n}장 / 검은 띠 ${bands}개 (높이 ${blackH}dp 이상)", Toast.LENGTH_LONG).show()
@@ -785,6 +857,7 @@ class MainActivity : Activity() {
             if (needReload) web.reload() else if (needInject) injectScript()
         }.create()
         (box.getChildAt(box.childCount - 1) as Button).tag = dlg
+        settingsDlg = dlg
         dlg.show()
     }
 
