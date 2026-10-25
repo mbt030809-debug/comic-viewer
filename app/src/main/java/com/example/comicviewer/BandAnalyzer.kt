@@ -107,6 +107,7 @@ class BandAnalyzer {
         val out = ArrayList<FloatArray>()
         var start = -1
         var rr = 0f; var rg = 0f; var rb = 0f // 현재 띠의 기준색(시작 줄 평균)
+        var chain = 0f // 현재 띠가 색 변화로 바로 이어져 시작했으면 1 (그라데이션 연쇄 병합 방지용)
         for (y in 0..bh) {
             var blank = false; var mr = 0f; var mg = 0f; var mb = 0f
             if (y < bh) {
@@ -122,14 +123,14 @@ class BandAnalyzer {
                 blank = near >= n * 0.97f
                 if (blank && start >= 0 && (Math.abs(mr - rr) > tol || Math.abs(mg - rg) > tol || Math.abs(mb - rb) > tol)) {
                     // 색이 달라지면 이전 띠를 끝내고 이 줄에서 새 띠 시작
-                    if (y - start >= 2) out.add(floatArrayOf(start.toFloat() / bh, y.toFloat() / bh))
-                    start = y; rr = mr; rg = mg; rb = mb
+                    if (y - start >= 2) out.add(floatArrayOf(start.toFloat() / bh, y.toFloat() / bh, chain))
+                    start = y; rr = mr; rg = mg; rb = mb; chain = 1f
                     continue
                 }
             }
-            if (blank && start < 0) { start = y; rr = mr; rg = mg; rb = mb }
+            if (blank && start < 0) { start = y; rr = mr; rg = mg; rb = mb; chain = 0f }
             else if (!blank && start >= 0) {
-                if (y - start >= 2) out.add(floatArrayOf(start.toFloat() / bh, y.toFloat() / bh))
+                if (y - start >= 2) out.add(floatArrayOf(start.toFloat() / bh, y.toFloat() / bh, chain))
                 start = -1
             }
         }

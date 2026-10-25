@@ -60,7 +60,6 @@ class MainActivity : Activity() {
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
-    private var snapWasSkip = false // 마지막 computeSnap 결과가 '건너뜀' 이동인지
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
@@ -517,8 +516,10 @@ class MainActivity : Activity() {
             animateScroll(d ?: dist, ms) }
     }
 
+    private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
     private fun animateScroll(dist: Int, ms: Int = smoothMs) {
         pageAnim?.cancel()
+        animTargetY = web.scrollY + dist
         if (ms == 0) { web.scrollBy(0, dist); return }
         var done = 0
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -611,67 +612,83 @@ class MainActivity : Activity() {
     private var analyzeTick = 0
     private class Img(val src: String, val t: Float, val h: Float)
 
-    private fun parseImgs(r: String?): Pair<Boolean, List<Img>>? = try {
+    private class Parsed(val dark: Boolean, val imgs: List<Img>, val blk: List<FloatArray>)
+
+    private fun parseImgs(r: String?): Parsed? = try {
         val o = JSONObject(org.json.JSONTokener(r ?: "").nextValue() as String)
         val a = o.getJSONArray("imgs")
-        o.getBoolean("dark") to List(a.length()) { a.getJSONObject(it).let { j -> Img(j.getString("s"), j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } }
+        val bk = o.optJSONArray("blk")
+        Parsed(o.getBoolean("dark"),
+            List(a.length()) { a.getJSONObject(it).let { j -> Img(j.getString("s"), j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } },
+            if (bk == null) emptyList() else List(bk.length()) { bk.getJSONObject(it).let { j -> floatArrayOf(j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } })
     } catch (_: Exception) { null }
 
     /** 주기적으로 페이지의 큰 이미지를 찾아 아직 분석하지 않은 것을 백그라운드로 분석 요청 */
     private fun scheduleAnalysis() {
         if (!snapImg) return
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) }
+            parseImgs(r)?.imgs?.sortedBy { abs(it.t - web.scrollY / density) }?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) } // 현재 위치와 가까운 이미지부터 분석
         }
     }
 
-    /** css px 단위의 검은 띠 목록(top, bottom)을 합쳐서 반환. 이미지 내부의 검은 행 + 어두운 배경일 때 이미지 사이 빈틈 */
-    private fun bandsOf(dark: Boolean, imgs: List<Img>): List<FloatArray> {
-        // raw: [top, bottom, 필요한 최소 높이]. 이미지 가장자리에 닿은 띠/이미지 사이 빈틈은 blackH, 이미지 안쪽 단색 구간(하늘·말풍선 등)은 더 크게 요구
+    /** css px 단위의 단색 띠 목록 [top, bottom, 최소높이] : 이미지 안의 단색 행 + 이미지 사이 빈틈(안에 다른 요소가 없을 때만) */
+    private fun bandsOf(p: Parsed): List<FloatArray> {
+        // raw: [top, bottom, 필요한 최소 높이, 색 변화로 시작한 띠(1)]. 가장자리에 닿은 띠/이미지 사이 빈틈은 blackH, 이미지 안쪽 단색 구간(하늘·말풍선 등)은 더 크게 요구
         val raw = ArrayList<FloatArray>()
         var maxBottom = Float.NEGATIVE_INFINITY
-        imgs.forEachIndexed { i, im ->
+        val gapCap = maxOf(blackH * 6f, 400f)
+        p.imgs.forEachIndexed { i, im ->
             analyzer.cached(im.src, colorTol, blackL, blackW)?.forEach {
-                val edge = it[0] <= 0.003f || it[1] >= 0.997f
+                val edge = it[0] * im.h <= 4f || (1f - it[1]) * im.h <= 4f // 가장자리 판정은 px 기준(이미지 높이와 무관)
                 val req = if (edge) blackH.toFloat() else maxOf(2f * blackH, 0.15f * im.h)
-                raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h, req))
+                raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h, req, if (it.size > 2) it[2] else 0f))
             }
-            if (i > 0 && im.t - maxBottom > 0f) raw.add(floatArrayOf(maxBottom, im.t, blackH.toFloat())) // 이미지 사이 빈 영역(배경색 무관). 겹치는 이미지는 최대 하단 기준
+            if (i > 0) {
+                val gap = im.t - maxBottom
+                // 빈틈이 너무 크거나(내용이 있을 가능성), 그 안에 광고/작은 조각/미로딩 이미지가 있으면 경계로 보지 않음
+                if (gap > 0f && gap <= gapCap && p.blk.none { it[0] < im.t && it[0] + it[1] > maxBottom })
+                    raw.add(floatArrayOf(maxBottom, im.t, blackH.toFloat(), 0f))
+            }
             maxBottom = maxOf(maxBottom, im.t + im.h)
         }
         raw.sortBy { it[0] }
         val merged = ArrayList<FloatArray>()
         for (b in raw) {
             val last = merged.lastOrNull()
-            if (last != null && b[0] - last[1] <= 3f) { last[1] = maxOf(last[1], b[1]); last[2] = minOf(last[2], b[2]) } else merged.add(floatArrayOf(b[0], b[1], b[2]))
+            // 색이 바뀌며 이어진 띠(그라데이션)는 합치지 않아 하나의 큰 띠로 오인되지 않게 함
+            if (last != null && b[0] - last[1] <= 8f && b[3] == 0f) { last[1] = maxOf(last[1], b[1]); last[2] = minOf(last[2], b[2]) }
+            else merged.add(floatArrayOf(b[0], b[1], b[2], b[3]))
         }
         return merged.filter { it[1] - it[0] >= it[2] }
     }
 
     /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
     private fun computeSnap(r: String?, dist: Int, viewH: Int): Int? {
-        snapWasSkip = false
-        val (dark, imgs) = parseImgs(r) ?: return null
-        val bands = bandsOf(dark, imgs)
-        val cur = web.scrollY / density; val hCss = viewH / density
+        val parsed = parseImgs(r) ?: return null
+        val bands = bandsOf(parsed)
+        // 이동 애니메이션이 진행 중이면 그 목표 위치를 현재 위치로 사용(연타 시 어긋남 방지)
+        val curPx = if (pageAnim?.isRunning == true) animTargetY else web.scrollY
+        val cur = curPx / density; val hCss = viewH / density
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density
-        // 이미 경계 바로 앞에서 멈춘 상태라면, 다음 이동은 경계(단색 띠)를 건너뛰어 다음 이미지 맨 위가 보이게 함
         val tol = 12f
+        val m = skipTopPct / 100f * hCss // 화면 높이의 N%만큼 위를 비워 다음 이미지 윗부분이 카메라에 가려지지 않게
+        // 이미 경계 바로 앞에서 멈춘 상태라면, 다음 이동은 경계(단색 띠)를 건너뛰어 다음 이미지 맨 위가 보이게 함
         if (skipBand) {
             if (dist > 0) bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }?.let { b ->
-                val m = skipTopPct / 100f * hCss // 화면 높이의 N%만큼 위를 비워 다음 이미지 윗부분이 카메라에 가려지지 않게
-                val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) { snapWasSkip = true; return t }
-            } else bands.lastOrNull { abs(it[1] - cur) <= tol }?.let { b ->
-                val m = skipTopPct / 100f * hCss
-                val t = ((b[0] + m - visH - cur) * density).toInt(); if (t < -4) { snapWasSkip = true; return t } // 위로: 윗 이미지의 끝이 화면 아래에 오도록
+                val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) return t
+            } else bands.lastOrNull { abs(it[1] - cur) <= tol || abs(it[1] - m - cur) <= tol }?.let { b ->
+                val t = ((b[0] + m - visH - cur) * density).toInt(); if (t < -4) return t // 위로: 윗 이미지의 끝이 화면 아래에 오도록
             }
         }
+        // 건너뜀 직후(띠 아래끝이 화면 위 여백 위치)에는 무시 구간 없이 다음 경계에 멈춤(그렇지 않으면 짧은 이미지에서 다음 이미지로 넘어가 버림)
+        val landed = skipBand && bands.any { abs(it[1] - m - cur) <= tol }
+        val ig = if (landed) 0f else (ignorePct / 100f) * d
         val res = if (dist > 0) {
-            val b = bands.filter { it[0] >= cur + visH + (ignorePct / 100f) * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
+            val b = bands.filter { it[0] >= cur + visH + maxOf(ig, tol + 1f) && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
             ((b[0] - visH - cur) * density).toInt()
         } else {
-            val b = bands.filter { it[1] <= cur - (ignorePct / 100f) * d && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
+            val b = bands.filter { it[1] <= cur - maxOf(ig, tol + 1f) && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
             -((cur - b[1]) * density).toInt()
         }
         return if (abs(res) < 4) null else res // 이동량이 거의 0이면(멈춤 위치에 이미 있음) 일반 이동
@@ -944,9 +961,9 @@ class MainActivity : Activity() {
         btn("분석 상태") {
             web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
                 val pr = parseImgs(r)
-                val n = pr?.second?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
-                val total = pr?.second?.size ?: 0
-                val bands = if (pr != null) bandsOf(pr.first, pr.second).size else 0
+                val n = pr?.imgs?.count { analyzer.cached(it.src, colorTol, blackL, blackW) != null } ?: 0
+                val total = pr?.imgs?.size ?: 0
+                val bands = if (pr != null) bandsOf(pr).size else 0
                 Toast.makeText(this@MainActivity, "분석 $n/$total · 띠 $bands", Toast.LENGTH_LONG).show()
             }
         }
@@ -1093,7 +1110,8 @@ window.__cvImgs=function(){var out=[],y=window.scrollY;
  if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)out.push({s:k[n].__cvsrc||k[n].src,t:k[n].offsetTop,h:k[n].offsetHeight})}
  else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)out.push({s:i.currentSrc||i.src,t:q.top+y,h:q.height})})
   out.sort(function(a,b){return a.t-b.t})}
- return JSON.stringify({dark:dark,imgs:out})};
+ var blk=[];if(!root){[].slice.call(document.querySelectorAll('img,iframe,canvas,video')).forEach(function(e){if(e.closest('#cv-root')||e.closest('.cv-keep')||(e.tagName=='IMG'&&big(e)))return;var q=e.getBoundingClientRect();if(q.height>=10&&q.width>0)blk.push({t:q.top+y,h:q.height})})} // 큰 이미지가 아닌 보이는 요소(광고·작은 조각·미로딩 이미지): 이미지 사이 빈틈 판정에서 '내용 있음'으로 취급
+ return JSON.stringify({dark:dark,imgs:out,blk:blk})};
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
