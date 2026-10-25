@@ -56,6 +56,7 @@ class MainActivity : Activity() {
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
+    private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
     private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
@@ -616,6 +617,15 @@ class MainActivity : Activity() {
         val cur = web.scrollY / density; val hCss = viewH / density
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density
+        // 이미 경계 바로 앞에서 멈춘 상태라면, 다음 이동은 경계(단색 띠)를 건너뛰어 다음 이미지 맨 위가 보이게 함
+        val tol = 12f
+        if (skipBand) {
+            if (dist > 0) bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }?.let { b ->
+                val t = ((b[1] - cur) * density).toInt(); if (t > 4) return t
+            } else bands.lastOrNull { abs(it[1] - cur) <= tol }?.let { b ->
+                val t = ((b[0] - visH - cur) * density).toInt(); if (t < -4) return t // 위로: 윗 이미지의 끝이 화면 아래에 오도록
+            }
+        }
         val res = if (dist > 0) {
             val b = bands.filter { it[0] >= cur + visH + (ignorePct / 100f) * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
             ((b[0] - visH - cur) * density).toInt()
@@ -852,6 +862,7 @@ class MainActivity : Activity() {
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
         sw("경계 멈춤: 이미지 사이 단색 영역(검정/흰색 등)이 보이기 직전 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
+        sw("경계에서 멈춘 뒤 다음 이동은 경계를 건너뛰어 다음 이미지 맨 위로", skipBand) { skipBand = it }
         bar("무시 구간 (이동 거리의 이 % 이내에서 시작되는 단색 띠는 무시) ", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
         box.addView(TextView(this).apply { text = "단색 판정 영역: 가로 위치 ${blackL}% / 가로 길이 ${blackW}% / 세로 길이 ${blackH}dp" })
         box.addView(Button(this).apply {
