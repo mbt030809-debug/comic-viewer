@@ -173,8 +173,8 @@ class MainActivity : Activity() {
         injectScript()
     }
 
-    override fun onDestroy() { applyAuto(false); web.destroy(); super.onDestroy() }
-    override fun onPause() { applyAuto(false); savePosNow(); super.onPause() }
+    override fun onDestroy() { applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
+    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); super.onPause() }
     @Deprecated("") override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
         KeyEvent.KEYCODE_VOLUME_DOWN -> { pageScroll(1); true }
