@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
  * 내려받아 축소한 비트맵은 LRU로 보관해, 밝기/영역 설정을 바꿔도 다시 내려받지 않고 재분석.
  */
 class BandAnalyzer {
-    private val pool = Executors.newFixedThreadPool(2)
+    @Volatile private var pool = Executors.newFixedThreadPool(1) // 1개 스레드: 사이트에 부하를 덜 주고 페이지 로딩을 방해하지 않음
     private val cache = ConcurrentHashMap<String, List<FloatArray>>() // key -> [[startFrac, endFrac], ...]
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val failures = ConcurrentHashMap<String, LongArray>() // key -> [실패 횟수, 마지막 실패 시각]
@@ -27,6 +27,14 @@ class BandAnalyzer {
     fun cached(url: String, tol: Int, left: Int, width: Int): List<FloatArray>? = cache[key(url, tol, left, width)]
     fun analyzedCount() = cache.size
     fun shutdown() { pool.shutdownNow() }
+
+    /** 대기 중인 분석을 모두 취소(페이지 이동 시). 진행 중이던 것은 결과를 버림 */
+    fun cancelPending() {
+        val old = pool
+        pool = Executors.newFixedThreadPool(1)
+        old.shutdownNow()
+        pending.clear()
+    }
 
     /** left/width: 검은색 판정에 쓸 가로 영역(이미지 너비 대비 %). 오른쪽 워터마크 등을 제외하려고 사용 */
     fun enqueue(url: String, referer: String, tol: Int, left: Int, width: Int) {

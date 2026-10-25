@@ -118,6 +118,7 @@ class MainActivity : Activity() {
         web.webViewClient = object : WebViewClient() {
             override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
                 handler.removeCallbacksAndMessages(null)
+                analyzer.cancelPending() // 이전 페이지 이미지 분석이 새 페이지 로딩과 대역폭/연결을 다투지 않게 중단
                 curKey = null; saving = false; atBottomShown = false; nextBtn.visibility = View.GONE
                 urlInput.setText(u); prefs.edit().putString("last", u).apply()
             }
@@ -131,7 +132,7 @@ class MainActivity : Activity() {
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 if (adblock) {
                     val h = r.url.host ?: ""
-                    if (adHosts.any { h.contains(it) }) return WebResourceResponse("text/plain", "utf-8", null)
+                    if (adHosts.any { h.contains(it) }) return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                 }
                 return null
             }
@@ -191,8 +192,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); web.pauseTimers(); super.onPause() }
-    override fun onResume() { super.onResume(); web.onResume(); web.resumeTimers() }
+    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); super.onPause() }
+    override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
         KeyEvent.KEYCODE_VOLUME_DOWN -> { if (e.repeatCount == 0 && regionScrim == null) pageScroll(1); true } // 길게 눌러 반복되는 키 입력은 무시(애니메이션 재시작 방지)
@@ -625,7 +626,7 @@ class MainActivity : Activity() {
 
     /** 주기적으로 페이지의 큰 이미지를 찾아 아직 분석하지 않은 것을 백그라운드로 분석 요청 */
     private fun scheduleAnalysis() {
-        if (!snapImg) return
+        if (!snapImg || web.progress < 100) return // 페이지 로딩이 끝난 뒤에만 분석(로딩을 방해하지 않음)
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
             parseImgs(r)?.imgs?.sortedBy { abs(it.t - web.scrollY / density) }?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) } // 현재 위치와 가까운 이미지부터 분석
         }
