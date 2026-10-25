@@ -92,11 +92,11 @@ class MainActivity : Activity() {
         nextBtn = findViewById(R.id.nextBtn)
         applyKeepOn()
         initScrollBar()
-        findViewById<View>(R.id.topBar).addOnLayoutChangeListener { v, _, t, _, b, _, _, _, _ ->
+        findViewById<View>(R.id.topBar).addOnLayoutChangeListener { v, _, t, _, bottom, _, _, _, _ ->
             // 메뉴가 표시 중이면 웹페이지 상단 여백을 메뉴 높이에 맞춤(초기 표시/높이 변화 대응)
             if (!full && menuAnim?.isRunning != true && v.visibility == View.VISIBLE) {
                 val p2 = web.layoutParams as FrameLayout.LayoutParams
-                if (p2.topMargin != b - t) { p2.topMargin = b - t; web.layoutParams = p2 }
+                if (p2.topMargin != bottom - t) { p2.topMargin = bottom - t; web.layoutParams = p2 }
             }
         }
         web.isVerticalScrollBarEnabled = false; web.isHorizontalScrollBarEnabled = false
@@ -443,7 +443,10 @@ class MainActivity : Activity() {
                 else -> dragging
             }
         }
-        val tick = object : Runnable { override fun run() { updateThumb(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis(); track.postDelayed(this, 1000) } }
+        val tick = object : Runnable { override fun run() {
+            try { updateThumb(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis() } catch (_: Exception) { /* 저장 데이터 이상 등으로 1초 주기 작업이 앱을 종료시키지 않게 */ }
+            track.postDelayed(this, 1000)
+        } }
         track.postDelayed(tick, 1000)
     }
     private fun updateThumb() {
@@ -750,7 +753,8 @@ class MainActivity : Activity() {
 
     private class Series(var name: String, val key: String, var last: Int, var max: Int, val eps: MutableSet<Int>, var url: String, var time: Long)
 
-    private fun loadSeries(): MutableList<Series> {
+    private fun loadSeries(): MutableList<Series> = try { loadSeriesRaw() } catch (_: Exception) { mutableListOf() }
+    private fun loadSeriesRaw(): MutableList<Series> {
         val a = JSONArray(prefs.getString("series", "[]"))
         return MutableList(a.length()) {
             val o = a.getJSONObject(it)
@@ -780,7 +784,8 @@ class MainActivity : Activity() {
     }
 
     private class Pos(val key: String, val y: Int, val ratio: Float, val exp: Boolean, val two: Boolean = false, val sc: Int = 100)
-    private fun loadPos(): MutableList<Pos> {
+    private fun loadPos(): MutableList<Pos> = try { loadPosRaw() } catch (_: Exception) { mutableListOf() }
+    private fun loadPosRaw(): MutableList<Pos> {
         val a = JSONArray(prefs.getString("pos", "[]"))
         return MutableList(a.length()) { val o = a.getJSONObject(it); Pos(o.getString("k"), o.getInt("y"), o.getDouble("r").toFloat(), o.getBoolean("e"), o.optBoolean("t", false), o.optInt("s", 100)) }
     }
@@ -844,7 +849,8 @@ class MainActivity : Activity() {
     }
 
     // ---- 북마크 ----
-    private fun loadBookmarks(): MutableList<Pair<String, String>> {
+    private fun loadBookmarks(): MutableList<Pair<String, String>> = try { loadBookmarksRaw() } catch (_: Exception) { mutableListOf() }
+    private fun loadBookmarksRaw(): MutableList<Pair<String, String>> {
         val a = JSONArray(prefs.getString("bookmarks", "[]"))
         return MutableList(a.length()) { a.getJSONObject(it).let { o -> o.getString("t") to o.getString("u") } }
     }
