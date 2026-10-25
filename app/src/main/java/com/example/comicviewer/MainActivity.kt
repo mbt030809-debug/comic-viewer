@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private var autoPageMode get() = prefs.getBoolean("autoPage", false); set(v) = prefs.edit().putBoolean("autoPage", v).apply() // 자동 방식2
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
     private var autoWaitScale get() = prefs.getBoolean("autoWaitScale", false); set(v) = prefs.edit().putBoolean("autoWaitScale", v).apply() // 경계 때문에 덜 이동했으면 대기도 그 비율만큼 단축
+    private var autoWaitMin get() = prefs.getInt("autoWaitMin", 5); set(v) = prefs.edit().putInt("autoWaitMin", v).apply() // 경계로 덜 이동했을 때의 최소 대기(0.1초 단위)
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
@@ -714,7 +715,9 @@ class MainActivity : Activity() {
                 return
             }
             pageScroll(1) { ratio, ms -> // 설정 거리만큼 이동했으면 설정 대기, 경계로 덜 이동했으면(옵션) 줄어든 비율만큼 덜 대기
-                val wait = autoWait * 100L * (if (autoWaitScale) ratio else 1f)
+                // 대기 = 최소 + (최대 - 최소) × 이동 비율  (최대 = 설정 대기시간, 최소 = 최소 대기시간)
+                val maxW = autoWait * 100L; val minW = minOf(autoWaitMin * 100L, maxW)
+                val wait = if (autoWaitScale) minW + (maxW - minW) * ratio else maxW.toFloat()
                 handler.postDelayed(this, wait.toLong() + ms)
             }
         }
@@ -951,6 +954,18 @@ class MainActivity : Activity() {
             })
         })
         sw("경계 이동은 대기 단축", autoWaitScale) { autoWaitScale = it }
+        box.addView(EditText(this).apply {
+            hint = "최소 대기 (초)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(String.format(java.util.Locale.US, "%.1f", autoWaitMin / 10f))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(e: android.text.Editable?) {
+                    e?.toString()?.toFloatOrNull()?.let { autoWaitMin = (it * 10).toInt().coerceIn(0, 3600) }
+                }
+                override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+                override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+            })
+        })
         sw("끝에서 다음화", autoNext) { autoNext = it }
 
         group("경계")
