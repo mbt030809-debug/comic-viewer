@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
     private var hz120 get() = prefs.getBoolean("hz120", false); set(v) = prefs.edit().putBoolean("hz120", v).apply() // 최고 주사율 요청
+    private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 이동 후 이미지 경계에 맞춤
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
     private var imgScale: Int // 이미지 너비(%): 접힘/펼침 상태별로 따로 저장
@@ -452,6 +453,25 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
+        if (!snapImg) { animateScroll(dist); return }
+        // 이미지 경계에 맞춤: 목표 위치에서 가까운 이미지 윗변(거리 35% 이내)이 있으면 그 위치에서 멈춤
+        web.evaluateJavascript("window.__cvBounds?window.__cvBounds():'[]'") { r ->
+            var delta = dist
+            try {
+                val arr = JSONArray(org.json.JSONTokener(r ?: "\"[]\"").nextValue() as? String ?: "[]")
+                val cur = web.scrollY; val target = cur + dist
+                var best = target; var bd = Int.MAX_VALUE
+                for (i in 0 until arr.length()) {
+                    val px = (arr.getDouble(i) * density).toInt(); val d = abs(px - target)
+                    if (d < bd && d <= abs(dist) * 0.35f) { bd = d; best = px }
+                }
+                if (abs(best - cur) >= 20) delta = best - cur
+            } catch (_: Exception) {}
+            animateScroll(delta)
+        }
+    }
+
+    private fun animateScroll(dist: Int) {
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
@@ -683,6 +703,7 @@ class MainActivity : Activity() {
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
+        sw("이동 후 이미지 경계(이미지 맨 위)에 맞춰 멈춤", snapImg) { snapImg = it }
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
         bar("▼ 꾹 누름 연속 스크롤 속도 ", 100, 5000, holdSpeed, { "${it}px/초" }) { holdSpeed = it / 50 * 50 }
         box.addView(Button(this).apply { text = "버튼 위치 초기화 (이동은 상단 메뉴 '편집')"; setOnClickListener { resetBtnPositions() } })
@@ -824,6 +845,10 @@ function info(){var im=[].slice.call(document.images).filter(function(i){return 
  var sz=im.map(function(i){return i.naturalWidth+'x'+i.naturalHeight+'('+Math.round(i.getBoundingClientRect().width)+')'}).sort(function(a,b){return parseInt(b)*parseInt(b.split('x')[1])-parseInt(a)*parseInt(a.split('x')[1])}).slice(0,5);
  return 'img '+im.length+'개, 큰 이미지 '+im.filter(big).length+'개, 상위: '+sz.join(', ')+(window.__cvErr?' / 오류: '+window.__cvErr:'')+' / 패널 '+(strips[0]?strips[0].children.length:'없음')+' / iframe '+document.querySelectorAll('iframe').length+' / canvas '+document.querySelectorAll('canvas').length;}
 window.__cvInfo=info;
+window.__cvBounds=function(){var r=[];
+ if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)r.push(k[n].offsetTop)}
+ else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)r.push(q.top+window.scrollY)})}
+ return JSON.stringify(r)};
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
