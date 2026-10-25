@@ -9,8 +9,8 @@ android {
         applicationId = "com.example.comicviewer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 62
-        versionName = "1.62"
+        versionCode = 63
+        versionName = "1.63"
     }
     signingConfigs {
         getByName("debug") {
@@ -20,9 +20,6 @@ android {
             keyPassword = "android"
         }
     }
-    buildTypes { release { isMinifyEnabled = false } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-}
-dependencies {
 }

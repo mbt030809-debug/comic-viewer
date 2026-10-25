@@ -55,7 +55,7 @@ class BandAnalyzer {
     fun clear() { cache.clear(); failures.clear() }
 
     private fun bitmapFor(url: String, referer: String): Bitmap {
-        bitmaps.get(url)?.let { if (!it.isRecycled) return it }
+        bitmaps.get(url)?.let { return it }
         val bytes = download(url, referer)
         val opt = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opt)

@@ -104,7 +104,6 @@ class MainActivity : Activity() {
             javaScriptEnabled = true; domStorageEnabled = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
-        CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         BandAnalyzer.userAgent = web.settings.userAgentString // 분석용 이미지 요청도 페이지와 같은 UA 사용
         web.webChromeClient = WebChromeClient()
@@ -118,7 +117,6 @@ class MainActivity : Activity() {
             override fun onPageFinished(v: WebView, u: String) {
                 injectScript()
                 handler.postDelayed({ checkTitle() }, 300)
-                handler.postDelayed({ checkTitle() }, 2500)
                 if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) }
                 else if (auto && autoPageMode) { handler.removeCallbacks(pageAutoRun); handler.postDelayed(pageAutoRun, 1500) } // 페이지 이동으로 지워진 방식2 예약 복구
             }
@@ -254,7 +252,6 @@ class MainActivity : Activity() {
             if (r - l != orr - ol) placeBtns() // 폭이 바뀔 때(접힘/펼침·회전)만 저장된 비율로 재배치
             else if (b - t != ob - ot) floatBtns().forEach { v -> v.y = v.y.coerceIn(0f, ((b - t) - v.height).toFloat().coerceAtLeast(0f)) } // 시스템바 토글 등은 위치 유지
         }
-        layer.post { placeBtns() }
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         floatBtns().forEach { v ->
             var offX = 0f; var offY = 0f; var downX = 0f; var downY = 0f
@@ -632,7 +629,7 @@ class MainActivity : Activity() {
             analyzer.cached(im.src, colorTol, blackL, blackW)?.forEach {
                 val edge = it[0] * im.h <= 4f || (1f - it[1]) * im.h <= 4f // 가장자리 판정은 px 기준(이미지 높이와 무관)
                 val req = if (edge) blackH.toFloat() else maxOf(2f * blackH, 0.15f * im.h)
-                raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h, req, if (it.size > 2) it[2] else 0f))
+                raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h, req, it[2]))
             }
             if (i > 0) {
                 val gap = im.t - maxBottom
@@ -783,7 +780,7 @@ class MainActivity : Activity() {
         restorePos(key)
     }
 
-    private class Pos(val key: String, val y: Int, val ratio: Float, val exp: Boolean, val two: Boolean = false, val sc: Int = 100)
+    private class Pos(val key: String, val y: Int, val ratio: Float, val exp: Boolean, val two: Boolean, val sc: Int)
     private fun loadPos(): MutableList<Pos> = try { loadPosRaw() } catch (_: Exception) { mutableListOf() }
     private fun loadPosRaw(): MutableList<Pos> {
         val a = JSONArray(prefs.getString("pos", "[]"))
@@ -984,7 +981,7 @@ class MainActivity : Activity() {
         private const val SCRIPT = """(function(){
 var o=window.__cvOpts=window.__cvOpts||{};o.two=__TWO__;o.rtl=__RTL__;o.gap=__GAP__;
 if(window.__cvTimer){window.__cvTick();return}
-var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,diag=0,cnt=0,root=null,strips=[],spacer=null,exMode=false,bar=null;
+var bx=null,anchor=null,anchorTaken=0,anchorDone=0,anchorTries=0,cnt=0,root=null,strips=[],spacer=null,bar=null;
 function key(u){return (u||'').split('?')[0]}
 function rules(){try{var r=JSON.parse(localStorage.getItem('cv_ex')||'{}');r.urls=r.urls||[];r.idx=r.idx||[];r.sels=r.sels||[];return r}catch(e){return {urls:[],idx:[],sels:[]}}}
 function saveRules(r){try{localStorage.setItem('cv_ex',JSON.stringify(r))}catch(e){}}
@@ -1002,8 +999,8 @@ function takeAnchor(bigs){anchorTaken=1;
   if(r.bottom>1&&r.height>0){anchor={cvi:bigs[n].__cvi,frac:r.top<0?(-r.top/r.height):0};return}}
  var h=document.documentElement.scrollHeight;if(h>0)anchor={ratio:window.scrollY/h}}
 function restoreAnchor(){
- if(root&&(!anchor||anchorDone)){window.__cvReady=1;return}
- if(!anchor||anchorDone||!root)return;anchorTries++;var y=null;
+ if(!anchor||anchorDone){window.__cvReady=1;return}
+ anchorTries++;var y=null;
  if(anchor.cvi!==undefined){var cl=null,ready=true,k=strips[0].children;
   for(var n=0;n<k.length;n++){if(!k[n].complete||!k[n].naturalHeight)ready=false;if(k[n].__cvi===anchor.cvi){cl=k[n];break}}
   if(cl&&ready)y=cl.offsetTop+anchor.frac*cl.offsetHeight;}
@@ -1029,7 +1026,7 @@ function build(){
  var st=mk('style','cv-style');
  st.textContent='body>*:not(#cv-root):not(#cv-spacer):not(.cv-keep){display:none!important}html,body{margin:0!important;padding:0!important;background:#000!important;overflow:visible!important;height:auto!important;position:static!important;transform:none!important}#cv-root{position:fixed;top:0;height:100vh;z-index:2147483000;display:flex;background:#000;overflow:hidden}.cv-pane{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}.cv-strip{width:100%;will-change:transform}.cv-strip img{width:100%;height:auto;display:block;max-width:none;margin:0}';
  document.head.appendChild(st);
- root=mk('div','cv-root');root.style.pointerEvents=exMode?'auto':'none';
+ root=mk('div','cv-root');root.style.pointerEvents='none';
  for(var k=0;k<2;k++){var p=mk('div',null,'cv-pane'),s=mk('div',null,'cv-strip');p.appendChild(s);root.appendChild(p);strips.push(s);}
  spacer=mk('div','cv-spacer');
  document.body.appendChild(root);document.body.appendChild(spacer);
@@ -1073,16 +1070,11 @@ function tick0(){
  });
  if(!o.two)return;
  if(root){var live={};imgs.forEach(function(i){live[i.__cvi]=1});strips.forEach(function(s){[].slice.call(s.children).forEach(function(c){if(!live[c.__cvi])c.remove()})})}
- if(!anchorTaken&&!root)takeAnchor(bigs);
+ if(!anchorTaken)takeAnchor(bigs);
  if(!root){if(swept==0&&(bigs.length<4||needSweep(imgs))){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
  upd();restoreAnchor();
- if(!window.__cvDiag&&++diag>8&&!strips[0].children.length){window.__cvDiag=1;
-  var d=box('cv-diag','bottom:0;background:#c00');d.textContent='두쪽 보기: 큰 이미지를 찾지 못했습니다 / '+info();
-  setTimeout(function(){d.remove()},6000);}}
-function info(){var im=[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')});
- var sz=im.map(function(i){return i.naturalWidth+'x'+i.naturalHeight+'('+Math.round(i.getBoundingClientRect().width)+')'}).sort(function(a,b){return parseInt(b)*parseInt(b.split('x')[1])-parseInt(a)*parseInt(a.split('x')[1])}).slice(0,5);
- return 'img '+im.length+'개, 큰 이미지 '+im.filter(big).length+'개, 상위: '+sz.join(', ')+(window.__cvErr?' / 오류: '+window.__cvErr:'')+' / 패널 '+(strips[0]?strips[0].children.length:'없음')+' / iframe '+document.querySelectorAll('iframe').length+' / canvas '+document.querySelectorAll('canvas').length;}
+}
 window.__cvImgs=function(){var out=[],y=window.scrollY;
  if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)out.push({s:k[n].__cvsrc||k[n].src,t:k[n].offsetTop,h:k[n].offsetHeight})}
  else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)out.push({s:i.currentSrc||i.src,t:q.top+y,h:q.height})})
@@ -1142,7 +1134,7 @@ function applyBox(mode){var b=bx.getBoundingClientRect(),r=rules(),hits=[];
     if(pr.left>=b.left-12&&pr.right<=b.right+12&&pr.top>=b.top-12&&pr.bottom<=b.bottom+12)e=e.parentElement;else break}
    var sl=selOf(e);if(document.querySelectorAll(sl).length<=5){r.sels=r.sels||[];if(r.sels.indexOf(sl)<0)r.sels.push(sl);collapse(e);n=1}}}
  saveRules(r);rebuild();return n}
-window.__cvEx=function(on){exMode=on;if(bar){bar.remove();bar=null}if(bx){bx.remove();bx=null}
+window.__cvEx=function(on){if(bar){bar.remove();bar=null}if(bx){bx.remove();bx=null}
  if(on){mkBox();bar=box('cv-ui','top:0;background:#c00');
   var msg=document.createElement('div');msg.textContent='광고에 박스를 맞추기';bar.appendChild(msg);
   var res=document.createElement('div');
