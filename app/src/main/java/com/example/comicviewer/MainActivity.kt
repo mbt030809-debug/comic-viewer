@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private var btnSize get() = prefs.getInt("btnSize", 52); set(v) = prefs.edit().putInt("btnSize", v).apply() // 플로팅 버튼 크기(dp)
     private var holdSpeed get() = prefs.getInt("holdSpeed", 800); set(v) = prefs.edit().putInt("holdSpeed", v).apply() // ▼ 꾹 누름 연속 스크롤 속도(px/초)
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
+    private var blackLevel get() = prefs.getInt("blackLevel", 45); set(v) = prefs.edit().putInt("blackLevel", v).apply() // 검정으로 볼 밝기 상한(0~255)
     private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
     private var btnAlpha get() = prefs.getInt("alpha", 70); set(v) = prefs.edit().putInt("alpha", v).apply()
     private var autoSpeed get() = prefs.getInt("speed", 120); set(v) = prefs.edit().putInt("speed", v).apply()
@@ -401,7 +402,7 @@ class MainActivity : Activity() {
                 else -> dragging
             }
         }
-        val tick = object : Runnable { override fun run() { updateThumb(); checkTitle(); track.postDelayed(this, 1000) } }
+        val tick = object : Runnable { override fun run() { updateThumb(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis(); track.postDelayed(this, 1000) } }
         track.postDelayed(tick, 1000)
     }
     private fun updateThumb() {
@@ -439,93 +440,72 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (web.height * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
-        animateScroll(dist)
-    }
-
-    /**
-     * 화면 가장자리(top=true: 위, false: 아래)에서부터 연속으로 검은 영역이 몇 px 보이는지 비동기 측정.
-     * PixelCopy(API 26+)로 실제 화면 픽셀을 읽어 WebView 하드웨어 렌더링에서도 정확하고 메인 스레드를 막지 않음.
-     */
-    private var sampleBmp: Bitmap? = null
-    private var sampling = false
-    private val sampleScale = 0.25f
-    private fun sampleEdgeBlack(top: Boolean, cb: (Int) -> Unit) {
-        val w = web.width; val h = web.height
-        if (w <= 0 || h <= 0 || sampling) return
-        val bw = (w * sampleScale).toInt().coerceAtLeast(8); val bh = (h * sampleScale).toInt().coerceAtLeast(8)
-        var bmp = sampleBmp
-        if (bmp == null || bmp.width != bw || bmp.height != bh) { bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); sampleBmp = bmp }
-        val out = bmp!!
-        fun analyze() {
-            val px = IntArray(bw * bh); out.getPixels(px, 0, bw, 0, 0, bw, bh)
-            var rows = 0
-            for (i in 0 until bh) {
-                val r = if (top) i else bh - 1 - i
-                var non = 0
-                for (x in 0 until bw) { val p = px[r * bw + x]; if (((p shr 16) and 255) >= 30 || ((p shr 8) and 255) >= 30 || (p and 255) >= 30) non++ }
-                if (non > bw * 0.01f) break
-                rows++
-            }
-            sampling = false
-            cb((rows / sampleScale).toInt())
-        }
-        sampling = true
-        if (Build.VERSION.SDK_INT >= 26) {
-            val loc = IntArray(2); web.getLocationInWindow(loc)
-            val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + w, loc[1] + h)
-            try {
-                android.view.PixelCopy.request(window, rect, out, { r ->
-                    if (r == android.view.PixelCopy.SUCCESS) analyze() else { sampling = false; cb(0) }
-                }, handler2)
-            } catch (e: Exception) { sampling = false; cb(0) }
-        } else {
-            out.eraseColor(android.graphics.Color.WHITE)
-            val c = android.graphics.Canvas(out)
-            c.scale(sampleScale, sampleScale)
-            web.draw(c); analyze()
-        }
+        if (!snapImg) { animateScroll(dist); return }
+        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist) ?: dist) }
     }
 
     private fun animateScroll(dist: Int) {
         pageAnim?.cancel()
         if (smoothMs == 0) { web.scrollBy(0, dist); return }
         var done = 0
-        val detect = snapImg
-        val goTop = dist < 0
-        val minMove = abs(dist) * 0.5f // 설정한 이동 거리의 50% 이내에서 시작된 검은 영역은 무시
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = smoothMs.toLong(); interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { anim ->
-                val target = (anim.animatedValue as Float * dist).toInt()
+            addUpdateListener {
+                val target = (it.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
-                if (detect) {
-                    val movedAtReq = abs(done)
-                    sampleEdgeBlack(goTop) { blackPx ->
-                        // 검은 영역이 시작된 위치(= 이동량 - 보이는 검은 높이)가 50% 지점 이후일 때만 유효
-                        if (pageAnim === anim && blackPx >= blackH * density && movedAtReq - blackPx >= minMove) {
-                            anim.cancel()
-                            handler2.postDelayed({ alignAboveBlack(goTop) }, 60) // 멈춘 뒤 정확히 다시 측정해 검은 영역이 안 보이도록 되돌림
-                        }
-                    }
-                }
             }
             start()
         }
     }
 
-    /** 검은 영역의 윗변이 화면 가장자리에 오도록(= 검은색이 보이지 않고 그 위 이미지에서 멈추도록) 뒤로 되돌림 */
-    private fun alignAboveBlack(goTop: Boolean, retry: Int = 0) {
-        if (sampling && retry < 5) { handler2.postDelayed({ alignAboveBlack(goTop, retry + 1) }, 40); return }
-        sampleEdgeBlack(goTop) { blackPx ->
-            if (blackPx > 0) {
-                val back = if (goTop) blackPx else -blackPx
-                var d = 0
-                pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-                    duration = 120; interpolator = android.view.animation.DecelerateInterpolator()
-                    addUpdateListener { val t = (it.animatedValue as Float * back).toInt(); web.scrollBy(0, t - d); d = t }
-                    start()
-                }
-            }
+    // ---- 검은 경계 멈춤: 이미지를 미리 내려받아 분석한 검은 띠 위치로 목표 지점을 정함(이동 중 되돌림 없음) ----
+    private val analyzer = BandAnalyzer()
+    private var analyzeTick = 0
+    private class Img(val src: String, val t: Float, val h: Float)
+
+    private fun parseImgs(r: String?): Pair<Boolean, List<Img>>? = try {
+        val o = JSONObject(org.json.JSONTokener(r ?: "").nextValue() as String)
+        val a = o.getJSONArray("imgs")
+        o.getBoolean("dark") to List(a.length()) { a.getJSONObject(it).let { j -> Img(j.getString("s"), j.getDouble("t").toFloat(), j.getDouble("h").toFloat()) } }
+    } catch (_: Exception) { null }
+
+    /** 주기적으로 페이지의 큰 이미지를 찾아 아직 분석하지 않은 것을 백그라운드로 분석 요청 */
+    private fun scheduleAnalysis() {
+        if (!snapImg) return
+        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
+            parseImgs(r)?.second?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", blackLevel) }
+        }
+    }
+
+    /** css px 단위의 검은 띠 목록(top, bottom)을 합쳐서 반환. 이미지 내부의 검은 행 + 어두운 배경일 때 이미지 사이 빈틈 */
+    private fun bandsOf(dark: Boolean, imgs: List<Img>): List<FloatArray> {
+        val raw = ArrayList<FloatArray>()
+        imgs.forEachIndexed { i, im ->
+            analyzer.cached(im.src, blackLevel)?.forEach { raw.add(floatArrayOf(im.t + it[0] * im.h, im.t + it[1] * im.h)) }
+            if (dark && i + 1 < imgs.size) { val b = im.t + im.h; val n = imgs[i + 1].t; if (n - b > 0f) raw.add(floatArrayOf(b, n)) }
+        }
+        raw.sortBy { it[0] }
+        val merged = ArrayList<FloatArray>()
+        for (b in raw) {
+            val last = merged.lastOrNull()
+            if (last != null && b[0] - last[1] <= 3f) last[1] = maxOf(last[1], b[1]) else merged.add(floatArrayOf(b[0], b[1]))
+        }
+        return merged.filter { it[1] - it[0] >= blackH }
+    }
+
+    /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
+    private fun computeSnap(r: String?, dist: Int): Int? {
+        val (dark, imgs) = parseImgs(r) ?: return null
+        val bands = bandsOf(dark, imgs)
+        val cur = web.scrollY / density; val hCss = web.height / density
+        val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
+        val d = abs(dist) / density
+        return if (dist > 0) {
+            val b = bands.filter { it[0] >= cur + visH + 0.3f * d && it[0] <= cur + visH + d }.minByOrNull { it[0] } ?: return null
+            ((b[0] - visH - cur) * density).toInt()
+        } else {
+            val b = bands.filter { it[1] <= cur - 0.3f * d && it[1] >= cur - d }.maxByOrNull { it[1] } ?: return null
+            -((cur - b[1]) * density).toInt()
         }
     }
 
@@ -746,14 +726,19 @@ class MainActivity : Activity() {
         head("[▲▼ 버튼 / 볼륨키]")
         bar("1회 이동 거리 - 일반 보기 (화면 높이 대비) ", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
         bar("1회 이동 거리 - 두쪽 보기 (100%=한 칸 만큼) ", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
-        sw("이동 중 검은 경계(이미지 사이 검은색)가 보이면 그 위 이미지에서 멈춤", snapImg) { snapImg = it }
-        bar("검은 영역 감지 높이(이 높이 이상 보이면 그 위에서 멈춤) ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
+        sw("검은 경계 멈춤: 이미지를 미리 분석해 검은 띠 바로 위 이미지에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
+        bar("검은 띠로 볼 최소 높이 ", 10, 300, blackH, { "${it}dp" }) { blackH = it }
+        bar("검정으로 볼 밝기 기준(클수록 어두운 회색도 검정 취급) ", 5, 120, blackLevel, { "$it" }) { blackLevel = it; analyzer.clear(); scheduleAnalysis() }
         box.addView(Button(this).apply {
-            text = "검은 영역 감지 테스트 (현재 화면 위/아래 띠 확인)"
+            text = "분석 상태 확인"
             setOnClickListener {
-                sampleEdgeBlack(false) { bot -> sampleEdgeBlack(true) { top ->
-                    Toast.makeText(this@MainActivity, "아래쪽 연속 검은 영역 ${(bot / density).toInt()}dp / 위쪽 ${(top / density).toInt()}dp (감지 높이 ${blackH}dp 이상이면 경계로 판단)", Toast.LENGTH_LONG).show()
-                } }
+                web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
+                    val p = parseImgs(r)
+                    val n = p?.second?.count { analyzer.cached(it.src, blackLevel) != null } ?: 0
+                    val total = p?.second?.size ?: 0
+                    val bands = if (p != null) bandsOf(p.first, p.second).size else 0
+                    Toast.makeText(this@MainActivity, "이미지 $total 장 중 분석 완료 ${n}장 / 검은 띠 ${bands}개 (높이 ${blackH}dp 이상)", Toast.LENGTH_LONG).show()
+                }
             }
         })
         bar("이동 소요 시간(길수록 천천히 부드럽게) ", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
@@ -901,6 +886,14 @@ window.__cvBounds=function(){var r=[];
  if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)r.push(k[n].offsetTop)}
  else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)r.push(q.top+window.scrollY)})}
  return JSON.stringify(r)};
+window.__cvImgs=function(){var out=[],y=window.scrollY;
+ function lum(c){var m=/(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(c||'');if(!m)return null;if(m[4]!==undefined&&parseFloat(m[4])==0)return null;return 0.3*m[1]+0.59*m[2]+0.11*m[3]}
+ var l=lum(getComputedStyle(document.body).backgroundColor);if(l===null)l=lum(getComputedStyle(document.documentElement).backgroundColor);
+ var dark=l!==null&&l<60;
+ if(root){var k=strips[0].children;for(var n=0;n<k.length;n++)out.push({s:k[n].__cvsrc||k[n].src,t:k[n].offsetTop,h:k[n].offsetHeight})}
+ else{[].slice.call(document.images).filter(function(i){return !i.closest('#cv-root')&&big(i)}).forEach(function(i){var q=i.getBoundingClientRect();if(q.height>0)out.push({s:i.currentSrc||i.src,t:q.top+y,h:q.height})})
+  out.sort(function(a,b){return a.t-b.t})}
+ return JSON.stringify({dark:dark,imgs:out})};
 window.__cvTick=tick;
 window.__cvNext=function(click){
  var c=document.querySelector('a[rel=next][href]');
