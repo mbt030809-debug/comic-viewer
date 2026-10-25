@@ -59,6 +59,9 @@ class MainActivity : Activity() {
     private var snapImg get() = prefs.getBoolean("snapImg", false); set(v) = prefs.edit().putBoolean("snapImg", v).apply() // 검은 영역(이미지 경계) 감지 시 멈춤
     private var colorTol get() = prefs.getInt("colorTol", 8); set(v) = prefs.edit().putInt("colorTol", v).apply() // 같은 색으로 볼 색상 차이 허용(%)
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
+    private var skipMs get() = prefs.getInt("skipMs", 600); set(v) = prefs.edit().putInt("skipMs", v).apply() // 경계 건너뜀 이동 시간
+    private var skipMargin get() = prefs.getInt("skipMargin", 40); set(v) = prefs.edit().putInt("skipMargin", v).apply() // 건너뛴 뒤 띠를 남겨 보여줄 여유(dp): 이미지 윗부분 잘림 방지
+    private var snapWasSkip = false // 마지막 computeSnap 결과가 '건너뜀' 이동인지
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
@@ -509,15 +512,15 @@ class MainActivity : Activity() {
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); return }
-        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> animateScroll(computeSnap(r, dist, finalH) ?: dist) }
+        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH); animateScroll(d ?: dist, if (d != null && snapWasSkip) skipMs else smoothMs) }
     }
 
-    private fun animateScroll(dist: Int) {
+    private fun animateScroll(dist: Int, ms: Int = smoothMs) {
         pageAnim?.cancel()
-        if (smoothMs == 0) { web.scrollBy(0, dist); return }
+        if (ms == 0) { web.scrollBy(0, dist); return }
         var done = 0
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = smoothMs.toLong(); interpolator = AccelerateDecelerateInterpolator()
+            duration = ms.toLong(); interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener {
                 val target = (it.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
@@ -645,6 +648,7 @@ class MainActivity : Activity() {
 
     /** 이동 목표를 검은 띠 위로 조정. 이동 거리의 50% 이내에서 시작되는 띠는 무시. 해당 없으면 null(일반 이동) */
     private fun computeSnap(r: String?, dist: Int, viewH: Int): Int? {
+        snapWasSkip = false
         val (dark, imgs) = parseImgs(r) ?: return null
         val bands = bandsOf(dark, imgs)
         val cur = web.scrollY / density; val hCss = viewH / density
@@ -654,9 +658,11 @@ class MainActivity : Activity() {
         val tol = 12f
         if (skipBand) {
             if (dist > 0) bands.firstOrNull { abs(it[0] - (cur + visH)) <= tol }?.let { b ->
-                val t = ((b[1] - cur) * density).toInt(); if (t > 4) return t
+                val m = minOf(skipMargin.toFloat(), (b[1] - b[0]) / 2f) // 띠 일부를 남겨 다음 이미지 윗부분이 잘리지 않게
+                val t = ((b[1] - m - cur) * density).toInt(); if (t > 4) { snapWasSkip = true; return t }
             } else bands.lastOrNull { abs(it[1] - cur) <= tol }?.let { b ->
-                val t = ((b[0] - visH - cur) * density).toInt(); if (t < -4) return t // 위로: 윗 이미지의 끝이 화면 아래에 오도록
+                val m = minOf(skipMargin.toFloat(), (b[1] - b[0]) / 2f)
+                val t = ((b[0] + m - visH - cur) * density).toInt(); if (t < -4) { snapWasSkip = true; return t } // 위로: 윗 이미지의 끝이 화면 아래에 오도록
             }
         }
         val res = if (dist > 0) {
@@ -929,6 +935,8 @@ class MainActivity : Activity() {
         group("경계")
         sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
         sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
+        bar("건너뜀 시간", 0, 3000, skipMs, { if (it == 0) "즉시" else "${it}ms" }) { skipMs = it / 100 * 100 }
+        bar("건너뜀 여유", 0, 200, skipMargin, { "${it}dp" }) { skipMargin = it }
         bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
         bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
         btn("영역 ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }

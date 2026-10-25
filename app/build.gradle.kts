@@ -9,8 +9,8 @@ android {
         applicationId = "com.example.comicviewer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 47
-        versionName = "1.47"
+        versionCode = 48
+        versionName = "1.48"
     }
     signingConfigs {
         getByName("debug") {
