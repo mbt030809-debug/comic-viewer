@@ -78,10 +78,13 @@ class BandAnalyzer {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 10000; conn.readTimeout = 20000
-            conn.setRequestProperty("User-Agent", ImageUa)
+            conn.setRequestProperty("User-Agent", userAgent)
+            conn.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
             if (referer.isNotEmpty()) conn.setRequestProperty("Referer", referer)
             CookieManager.getInstance().getCookie(url)?.let { conn.setRequestProperty("Cookie", it) }
             val code = conn.responseCode
+            // 서버가 내려준 쿠키(세션 등)는 페이지(WebView)와 공유되도록 저장
+            conn.headerFields?.get("Set-Cookie")?.forEach { CookieManager.getInstance().setCookie(url, it) }
             if (code in 300..399) {
                 val loc = conn.getHeaderField("Location") ?: throw IllegalStateException("redirect")
                 url = URL(URL(url), loc).toString(); conn.disconnect(); continue
@@ -146,6 +149,7 @@ class BandAnalyzer {
     }
 
     companion object {
+        @Volatile var userAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         const val ImageUa = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
     }
 }

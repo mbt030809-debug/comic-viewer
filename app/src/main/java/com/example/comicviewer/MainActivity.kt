@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     private var ignorePct get() = prefs.getInt("ignorePct", 30); set(v) = prefs.edit().putInt("ignorePct", v).apply() // 이동 거리 중 이 % 이내에서 시작되는 검은 띠는 무시
     private var skipTopPct get() = prefs.getInt("skipTopPct", 10); set(v) = prefs.edit().putInt("skipTopPct", v).apply() // 건너뛴 뒤 화면 위쪽을 비워둘 비율(%): 카메라(컷아웃)에 가려지는 윗부분 확보
     private var skipBand get() = prefs.getBoolean("skipBand", true); set(v) = prefs.edit().putBoolean("skipBand", v).apply() // 경계에 멈춘 뒤 다음 이동은 경계를 건너뜀
+    private var uaSpoof get() = prefs.getBoolean("uaSpoof", true); set(v) = prefs.edit().putBoolean("uaSpoof", v).apply() // 데스크톱 크롬형 UA 위장 사용
     private var blackL get() = prefs.getInt("blackL", 0); set(v) = prefs.edit().putInt("blackL", v).apply() // 검정 판정 영역: 왼쪽 위치(이미지 너비 %)
     private var blackW get() = prefs.getInt("blackW", 100); set(v) = prefs.edit().putInt("blackW", v).apply() // 검정 판정 영역: 가로 폭(%)
     private var blackH get() = prefs.getInt("blackH", 60); set(v) = prefs.edit().putInt("blackH", v).apply() // 검은 영역 감지 높이(dp)
@@ -110,10 +111,12 @@ class MainActivity : Activity() {
         web.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+            userAgentString = if (uaSpoof) BandAnalyzer.ImageUa else WebSettings.getDefaultUserAgent(this@MainActivity)
             setSupportMultipleWindows(false); javaScriptCanOpenWindowsAutomatically = false
         }
+        CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+        BandAnalyzer.userAgent = web.settings.userAgentString // 분석용 이미지 요청도 페이지와 같은 UA 사용
         web.webChromeClient = WebChromeClient()
         web.webViewClient = object : WebViewClient() {
             override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
@@ -192,7 +195,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); super.onPause() }
+    override fun onPause() { applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
     override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -975,6 +978,7 @@ class MainActivity : Activity() {
 
         group("광고")
         sw("도메인 차단", adblock) { adblock = it }
+        sw("크롬 UA", uaSpoof) { uaSpoof = it; needReload = true; web.settings.userAgentString = if (it) BandAnalyzer.ImageUa else WebSettings.getDefaultUserAgent(this@MainActivity); BandAnalyzer.userAgent = web.settings.userAgentString }
         btn("광고 제거") {
             settingsDlg?.dismiss()
             handler2.postDelayed({ // 닫힘 리스너(변경 적용/새로고침)가 먼저 끝난 뒤 실행
@@ -1068,7 +1072,7 @@ function upd(full){if(!root)return;
  if(full!==false)spacer.style.height=Math.max(strips[0].offsetHeight,H)+'px';} // 스크롤 중에는 offsetHeight(강제 레이아웃) 읽지 않음
 function rebuild(){strips.forEach(function(s){s.innerHTML=''});
  [].forEach.call(document.images,function(i){i.__cva=0});tick();}
-var lastScroll=0,lastTick=0;
+var lastScroll=0,lastTick=0,t0=Date.now();
 function tick(){var nw=Date.now();if(root&&nw-lastScroll<300&&nw-lastTick<1500)return; // 스크롤 중에는 건너뛰되 1.5초에 한 번은 반드시 실행
  lastTick=nw;
  try{tick0()}catch(e){window.__cvErr=String(e&&e.message||e);if(!window.__cvErrShown){window.__cvErrShown=1;var d=box('cv-err','bottom:0;background:#c00');d.textContent='두쪽 보기 오류: '+window.__cvErr;setTimeout(function(){d.remove()},8000)}}}
@@ -1077,7 +1081,8 @@ function tick0(){
  imgs.forEach(function(i){
   if(i.__cvi===undefined)i.__cvi=cnt++;
   var d=lazySrc(i);
-  if(d&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&&(o.two||i.getBoundingClientRect().top<window.innerHeight*3)){
+  if(d&&Date.now()-t0>4000&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&& // 사이트가 세션/토큰을 준비하기 전에 이미지를 강제로 요청하지 않도록 4초 대기
+   (o.two||i.getBoundingClientRect().top<window.innerHeight*3)){
    i.__cvl=1;i.loading='eager';i.src=d;}
   else if(o.two&&i.loading=='lazy')i.loading='eager';
  });
