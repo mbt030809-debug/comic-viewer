@@ -133,6 +133,9 @@ class MainActivity : Activity() {
                 if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) }
                 else if (auto && autoPageMode) { handler.removeCallbacks(pageAutoRun); handler.postDelayed(pageAutoRun, 1500) } // 페이지 이동으로 지워진 방식2 예약 복구
             }
+            override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
+                if (r.isForMainFrame) Toast.makeText(this@MainActivity, "로드 실패 · ${e.description}", Toast.LENGTH_SHORT).show()
+            }
             override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? {
                 if (adblock) {
                     val h = r.url.host ?: ""
@@ -205,11 +208,13 @@ class MainActivity : Activity() {
         else -> super.onKeyDown(k, e)
     }
 
-    private fun go(raw: String) {
+    private fun go(raw: String, notify: Boolean = false) {
         resumeAuto = false
         var u = raw.trim(); if (u.isEmpty()) return
         if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
+        if (notify) Toast.makeText(this, "열기 · ${android.net.Uri.parse(u).host ?: u}", Toast.LENGTH_SHORT).show() // 북마크/기록 탭 반응 확인용
+        web.stopLoading()
         web.loadUrl(u)
     }
 
@@ -848,7 +853,7 @@ class MainActivity : Activity() {
         fun label(s: Series) = "${s.name}\n마지막 ${s.last}화 · 최대 ${s.max}화 · 읽은 화 ${s.eps.size}개 · ${fmt.format(java.util.Date(s.time))}"
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, l.map { label(it) }.toMutableList())
         val dlg = AlertDialog.Builder(this).setTitle("기록")
-            .setAdapter(ad) { _, i -> if (l[i].url.isNotEmpty()) go(l[i].url) }
+            .setAdapter(ad) { _, i -> if (l[i].url.isNotEmpty()) go(l[i].url, true) else Toast.makeText(this, "저장된 주소 없음", Toast.LENGTH_SHORT).show() }
             .setNegativeButton("닫기", null).create()
         dlg.show()
         dlg.listView.setOnItemLongClickListener { _, _, i, _ ->
@@ -874,7 +879,7 @@ class MainActivity : Activity() {
         val list = loadBookmarks()
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, list.map { it.first }.toMutableList())
         val dlg = AlertDialog.Builder(this).setTitle("북마크")
-            .setAdapter(ad) { _, i -> go(list[i].second) }
+            .setAdapter(ad) { _, i -> go(list[i].second, true) }
             .setPositiveButton("추가") { _, _ ->
                 val u = web.url ?: return@setPositiveButton
                 val t = web.title?.takeIf { it.isNotBlank() } ?: u
