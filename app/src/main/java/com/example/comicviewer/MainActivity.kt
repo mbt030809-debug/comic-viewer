@@ -112,6 +112,7 @@ class MainActivity : Activity() {
         web.webViewClient = object : WebViewClient() {
             override fun onPageStarted(v: WebView, u: String, f: Bitmap?) {
                 handler.removeCallbacksAndMessages(null)
+                snapInfo = null
                 analyzer.cancelPending() // 이전 페이지 이미지 분석이 새 페이지 로딩과 대역폭/연결을 다투지 않게 중단
                 curKey = null; saving = false; atBottomShown = false; nextBtn.visibility = View.GONE
                 syncUrl(u)
@@ -321,6 +322,7 @@ class MainActivity : Activity() {
         if (was && !v) web.reload() else injectScript()
     }
     private fun injectScript() {
+        snapInfo = null // 레이아웃이 바뀔 수 있으므로 이미지 위치 정보 폐기
         if (two) quietUntil = System.currentTimeMillis() + 9000
         web.evaluateJavascript(
             SCRIPT.replace("__TWO__", "$two").replace("__RTL__", "$rtl").replace("__GAP__", "$gap"), null
@@ -470,6 +472,7 @@ class MainActivity : Activity() {
     private val saveRun = Runnable { savePosNow() }
     private fun onScrolled(y: Int, dy: Int) {
         updateThumb()
+        if (snapImg) { handler.removeCallbacks(analyzeRun); handler.postDelayed(analyzeRun, 500) } // 스크롤이 멈춘 뒤 갱신
         if (System.currentTimeMillis() < quietUntil && !userScrolling()) return // 두쪽 준비 중 코드 스크롤만 무시(손가락 스크롤은 처리)
         if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
@@ -512,11 +515,16 @@ class MainActivity : Activity() {
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
         if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, smoothMs); return }
-        web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r -> val d = computeSnap(r, dist, finalH)
-            // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
-            val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8) // 여백(멈춤 아래/건너뜀 위)을 포함한 실제 이동 거리에 비례, 하한·상한은 거의 두지 않아 속도가 일정
-            animateScroll(d ?: dist, ms)
-            onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), ms) }
+        // 이동은 바로 시작: 직전에 갱신해 둔 이미지 위치 정보가 신선하면 그것으로 경계를 계산하고, 없으면 일반 이동 후 정보를 갱신
+        val info = snapInfo
+        if (info == null || System.currentTimeMillis() - snapInfoAt > 6000) {
+            animateScroll(dist); onDecided?.invoke(1f, smoothMs); scheduleAnalysis(); return
+        }
+        val d = computeSnap(info, dist, finalH)
+        // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
+        val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8)
+        animateScroll(d ?: dist, ms)
+        onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), ms)
     }
 
     private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
@@ -627,10 +635,22 @@ class MainActivity : Activity() {
     } catch (_: Exception) { null }
 
     /** 주기적으로 페이지의 큰 이미지를 찾아 아직 분석하지 않은 것을 백그라운드로 분석 요청 */
+    private var snapInfo: Parsed? = null // 마지막으로 읽은 이미지 위치 정보(이동 시 즉시 계산용)
+    private var snapInfoAt = 0L
+    private val analyzeRun = Runnable { scheduleAnalysis() }
     private fun scheduleAnalysis() {
         if (!snapImg || web.progress < 100) return // 페이지 로딩이 끝난 뒤에만 분석(로딩을 방해하지 않음)
         web.evaluateJavascript("window.__cvImgs?window.__cvImgs():''") { r ->
-            parseImgs(r)?.imgs?.sortedBy { abs(it.t - web.scrollY / density) }?.forEach { if (it.src.startsWith("http")) analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) } // 현재 위치와 가까운 이미지부터 분석
+            val p = parseImgs(r) ?: return@evaluateJavascript
+            snapInfo = p; snapInfoAt = System.currentTimeMillis()
+            // 현재 화면 + 다음에 이동할 화면 범위의 이미지만 미리 내려받아 분석(나머지는 이동해 가면서)
+            val h = web.height / density; val cur = web.scrollY / density
+            val vis = if (two) 2 * h else h
+            val d = minOf(h * (if (two) pageRatio2 else pageRatio) / 100f, 3f * h)
+            val lo = cur - 0.5f * h; val hi = cur + vis + d + 0.5f * h
+            p.imgs.filter { it.t + it.h >= lo && it.t <= hi && it.src.startsWith("http") }
+                .sortedBy { abs(it.t - cur) }
+                .forEach { analyzer.enqueue(it.src, web.url ?: "", colorTol, blackL, blackW) }
         }
     }
 
@@ -666,8 +686,7 @@ class MainActivity : Activity() {
     }
 
     /** 이동 목표를 단색 띠 앞/뒤로 조정(멈춤·건너뜀). 설정한 무시 구간(%) 이내의 띠는 무시. 해당 없으면 null(일반 이동) */
-    private fun computeSnap(r: String?, dist: Int, viewH: Int): Int? {
-        val parsed = parseImgs(r) ?: return null
+    private fun computeSnap(parsed: Parsed, dist: Int, viewH: Int): Int? {
         val bands = bandsOf(parsed)
         // 이동 애니메이션이 진행 중이면 그 목표 위치를 현재 위치로 사용(연타 시 어긋남 방지)
         val curPx = if (pageAnim?.isRunning == true) animTargetY else web.scrollY
@@ -1086,7 +1105,7 @@ function tick0(){
   if(i.__cvi===undefined)i.__cvi=cnt++;
   var d=lazySrc(i);
   if(d&&Date.now()-t0>4000&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&& // 사이트가 세션/토큰을 준비하기 전에 이미지를 강제로 요청하지 않도록 4초 대기
-   (o.two||i.getBoundingClientRect().top<window.innerHeight*3)){
+   (o.two||i.getBoundingClientRect().top<window.innerHeight*2)){
    i.__cvl=1;i.loading='eager';i.src=d;}
   else if(o.two&&i.loading=='lazy')i.loading='eager';
  });

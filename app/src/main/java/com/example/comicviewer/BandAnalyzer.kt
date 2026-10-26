@@ -14,7 +14,8 @@ import java.util.concurrent.Executors
  * 내려받아 축소한 비트맵은 LRU로 보관해, 허용치/영역 설정을 바꿔도 다시 내려받지 않고 재분석.
  */
 class BandAnalyzer {
-    @Volatile private var pool = Executors.newFixedThreadPool(1) // 1개 스레드: 사이트에 부하를 덜 주고 페이지 로딩을 방해하지 않음
+    private fun newPool() = Executors.newFixedThreadPool(1) { r -> Thread(r).apply { priority = Thread.MIN_PRIORITY; isDaemon = true } } // 1개 스레드·최저 우선순위: 스크롤/로딩을 방해하지 않음
+    @Volatile private var pool = newPool()
     private val cache = ConcurrentHashMap<String, List<FloatArray>>() // key -> [[startFrac, endFrac], ...]
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val failures = ConcurrentHashMap<String, LongArray>() // key -> [실패 횟수, 마지막 실패 시각]
@@ -30,7 +31,7 @@ class BandAnalyzer {
     fun cancelPending() {
         if (pending.isEmpty()) return // 대기/진행 중인 분석이 없으면 스레드 풀을 새로 만들 필요 없음
         val old = pool
-        pool = Executors.newFixedThreadPool(1)
+        pool = newPool()
         old.shutdownNow()
         pending.clear()
     }
