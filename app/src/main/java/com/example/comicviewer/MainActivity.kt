@@ -729,7 +729,7 @@ class MainActivity : Activity() {
                 // 대기 = 최소 + (최대 - 최소) × 이동 비율  (최대 = 설정 대기시간, 최소 = 최소 대기시간)
                 val maxW = autoWait * 100L; val minW = minOf(autoWaitMin * 100L, maxW)
                 val wait = if (autoWaitScale) minW + (maxW - minW) * ratio else maxW.toFloat()
-                handler.postDelayed(this, wait.toLong() + ms)
+                if (auto && autoPageMode) { handler.removeCallbacks(this); handler.postDelayed(this, wait.toLong() + ms) } // 비동기 콜백이 겹쳐 두 갈래로 도는 것 방지
             }
         }
     }
