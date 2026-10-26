@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private var autoWait get() = prefs.getInt("autoWait", 30); set(v) = prefs.edit().putInt("autoWait", v).apply() // 방식2 대기(0.1초 단위)
     private var autoWaitScale get() = prefs.getBoolean("autoWaitScale", false); set(v) = prefs.edit().putBoolean("autoWaitScale", v).apply() // 경계 때문에 덜 이동했으면 대기도 그 비율만큼 단축
     private var autoWaitMin get() = prefs.getInt("autoWaitMin", 5); set(v) = prefs.edit().putInt("autoWaitMin", v).apply() // 경계로 덜 이동했을 때의 최소 대기(0.1초 단위)
+    private var calmMode get() = prefs.getBoolean("calm", false); set(v) = prefs.edit().putBoolean("calm", v).apply() // 멀미 방지: 일정 속도 이동·메뉴 즉시 전환·자동 스크롤 천천히 시작·중앙 기준점
     private var autoNext get() = prefs.getBoolean("autoNext", true); set(v) = prefs.edit().putBoolean("autoNext", v).apply()
     private var foldAutoTwo get() = prefs.getBoolean("foldTwo", false); set(v) = prefs.edit().putBoolean("foldTwo", v).apply()
     private var smoothMs get() = prefs.getInt("ms", 500); set(v) = prefs.edit().putInt("ms", v).apply()
@@ -76,7 +77,7 @@ class MainActivity : Activity() {
     private var resumeAuto = false
     private val clearResume = Runnable { resumeAuto = false }
     /** 다음화 이동 후 자동 스크롤을 이어갈 예약. 페이지 로드가 없으면 10초 뒤 자동 해제 */
-    private fun armResume() { resumeAuto = true; handler2.removeCallbacks(clearResume); handler2.postDelayed(clearResume, 10000) }
+    private fun armResume() { resumeAuto = true; handler2.removeCallbacks(clearResume); handler2.postDelayed(clearResume, 20000) }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(b: Bundle?) {
@@ -157,7 +158,7 @@ class MainActivity : Activity() {
         }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
-        updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons(); applyEditVisual()
+        updateTwoBtn(); applyBtnAlpha(); applyScale(); applyBtnSize(); initDraggableButtons(); applyEditVisual(); applyCalm()
         if (foldAutoTwo) { two = expanded; updateTwoBtn() }
         findViewById<View>(R.id.root).addOnLayoutChangeListener { _, l, _, r, _, ol, _, orr, _ ->
             val w = r - l
@@ -206,6 +207,8 @@ class MainActivity : Activity() {
         web.stopLoading()
         web.loadUrl(u)
     }
+
+    private fun applyCalm() { findViewById<View>(R.id.refDot).visibility = if (calmMode) View.VISIBLE else View.GONE }
 
     private fun applyKeepOn() {
         if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -401,7 +404,7 @@ class MainActivity : Activity() {
         lp.topMargin = to; web.layoutParams = lp
         web.translationY = (from - to).toFloat()
         menuAnim = ValueAnimator.ofFloat(web.translationY, 0f).apply {
-            duration = 300; interpolator = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f)
+            duration = if (calmMode) 0 else 300; interpolator = android.view.animation.PathInterpolator(0.33f, 0f, 0.67f, 1f) // 멀미 방지: 메뉴 전환 즉시
             addUpdateListener {
                 val ty = it.animatedValue as Float
                 web.translationY = ty
@@ -534,7 +537,7 @@ class MainActivity : Activity() {
         if (ms == 0) { web.scrollBy(0, dist); return }
         var done = 0
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ms.toLong(); interpolator = AccelerateDecelerateInterpolator()
+            duration = ms.toLong(); interpolator = if (calmMode) android.view.animation.LinearInterpolator() else AccelerateDecelerateInterpolator() // 멀미 방지: 가감속 없이 일정한 속도
             addUpdateListener {
                 val target = (it.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
@@ -722,11 +725,13 @@ class MainActivity : Activity() {
     }
 
     private val frame = object : Choreographer.FrameCallback {
-        var last = 0L; var acc = 0f
+        var last = 0L; var acc = 0f; var t0 = 0L
         override fun doFrame(t: Long) {
             if (!auto) return
+            if (t0 == 0L) t0 = t
             if (last != 0L) {
-                acc += autoSpeed * (t - last) / 1e9f
+                val ramp = if (calmMode) minOf(1f, (t - t0) / 1.5e9f) else 1f // 멀미 방지: 1.5초에 걸쳐 속도를 서서히 올림(급출발 방지)
+                acc += autoSpeed * ramp * (t - last) / 1e9f
                 val d = acc.toInt()
                 if (d != 0) { web.scrollBy(0, d); acc -= d }
             }
@@ -759,7 +764,7 @@ class MainActivity : Activity() {
         if (v) {
             pageAnim?.cancel()
             if (autoPageMode) handler.post(pageAutoRun)
-            else { frame.last = 0L; frame.acc = 0f; Choreographer.getInstance().postFrameCallback(frame) }
+            else { frame.last = 0L; frame.acc = 0f; frame.t0 = 0L; Choreographer.getInstance().postFrameCallback(frame) }
         } else {
             Choreographer.getInstance().removeFrameCallback(frame)
             handler.removeCallbacks(pageAutoRun)
@@ -811,6 +816,7 @@ class MainActivity : Activity() {
         val key = norm(name) + "|" + ep
         if (key == curKey) return
         curKey = key; saving = false // 새 화로 바뀌면(SPA 포함) 복원이 끝나기 전엔 저장하지 않음
+        if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) } // 자동으로 다음 화에 넘어왔으면 2초 뒤부터 다시 스크롤
         val l = loadSeries()
         val s = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
         s.name = name; s.last = ep; s.max = maxOf(s.max, ep); s.eps.add(ep); s.url = web.url ?: s.url; s.time = System.currentTimeMillis()
@@ -958,6 +964,7 @@ class MainActivity : Activity() {
 
         group("화면")
         sw("켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
+        sw("멀미 방지", calmMode) { calmMode = it; applyCalm() }
         bar("버튼 크기", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
         bar("버튼 투명도", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
         btn("버튼 위치 초기화") { resetBtnPositions() }
