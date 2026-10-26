@@ -114,9 +114,11 @@ class MainActivity : Activity() {
                 handler.removeCallbacksAndMessages(null)
                 analyzer.cancelPending() // 이전 페이지 이미지 분석이 새 페이지 로딩과 대역폭/연결을 다투지 않게 중단
                 curKey = null; saving = false; atBottomShown = false; nextBtn.visibility = View.GONE
-                urlInput.setText(u); prefs.edit().putString("last", u).apply()
+                syncUrl(u)
             }
+            override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) { syncUrl(u) } // 리다이렉트·SPA 이동 포함, 실제 현재 주소 반영
             override fun onPageFinished(v: WebView, u: String) {
+                syncUrl(u)
                 injectScript()
                 handler.postDelayed({ checkTitle() }, 300)
                 if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) }
@@ -177,7 +179,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { touching = false; applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
+    override fun onPause() { syncUrl(web.url); touching = false; applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
     override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -186,8 +188,16 @@ class MainActivity : Activity() {
         else -> super.onKeyDown(k, e)
     }
 
+    /** 현재 웹페이지 주소를 주소창과 '마지막 페이지'로 저장(주소 입력 중이면 주소창은 건드리지 않음) */
+    private fun syncUrl(u: String?) {
+        if (u.isNullOrEmpty() || u == "about:blank") return
+        prefs.edit().putString("last", u).apply()
+        if (!urlInput.hasFocus() && urlInput.text.toString() != u) urlInput.setText(u)
+    }
+
     private fun go(raw: String, notify: Boolean = false) {
         resumeAuto = false
+        urlInput.clearFocus()
         var u = raw.trim(); if (u.isEmpty()) return
         if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
@@ -372,6 +382,7 @@ class MainActivity : Activity() {
         if (v && editMode) return // 버튼 편집 중에는 메뉴를 숨기지 않음
         if (full == v) return
         full = v; fullLockUntil = System.currentTimeMillis() + 500; dyAcc = 0
+        if (v) urlInput.clearFocus() // 메뉴가 숨겨지면 주소창 편집 상태 해제(이후 주소 자동 갱신)
         // 메뉴 표시/숨김 애니메이션(300ms, One UI 유사 곡선): 메뉴가 나오면 웹페이지가 아래로 밀리고, 숨기면 위로 올라옴
         if (!v) topBar.setPadding(0, barInset, 0, 0) // 메뉴를 열면 상태바도 다시 나오므로 그 높이를 미리 포함
         run { // 숨김(GONE) 상태의 이전 높이가 낡았을 수 있어 항상 다시 측정
