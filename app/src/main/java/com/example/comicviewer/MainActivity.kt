@@ -181,7 +181,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { syncUrl(web.url); touching = false; applyAuto(false); stopHold(); savePosNow(); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
+    override fun onPause() { syncUrl(web.url); touching = false; applyAuto(false); stopHold(); savePosNow(sync = true); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
     override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -459,7 +459,7 @@ class MainActivity : Activity() {
             }
         }
         val tick = object : Runnable { override fun run() {
-            try { updateThumb(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis() } catch (_: Exception) { /* 저장 데이터 이상 등으로 1초 주기 작업이 앱을 종료시키지 않게 */ }
+            try { updateThumb(); updateBottomState(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis() } catch (_: Exception) { /* 저장 데이터 이상 등으로 1초 주기 작업이 앱을 종료시키지 않게 */ }
             track.postDelayed(this, 1000)
         } }
         track.postDelayed(tick, 1000)
@@ -473,18 +473,28 @@ class MainActivity : Activity() {
     }
 
     private val saveRun = Runnable { savePosNow() }
+    private var lastScrollWork = 0L
     private fun onScrolled(y: Int, dy: Int) {
-        updateThumb()
-        if (snapImg) { handler.removeCallbacks(analyzeRun); handler.postDelayed(analyzeRun, 500) } // 스크롤이 멈춘 뒤 갱신
-        if (System.currentTimeMillis() < quietUntil && !userScrolling()) return // 두쪽 준비 중 코드 스크롤만 무시(손가락 스크롤은 처리)
+        if (System.currentTimeMillis() < quietUntil && !userScrolling()) { updateThumb(); return } // 두쪽 준비 중 코드 스크롤만 무시(손가락 스크롤은 처리)
         if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
             if (dyAcc > 40) setFull(true) else if (userScrolling() && (dyAcc < -60 || y < 20)) setFull(false)
         }
+        // 나머지 부가 작업(스크롤바·바닥 감지·저장/분석 예약)은 초당 30회 이하로 제한: 웹뷰 값 조회와 핸들러 작업이 이동 애니메이션을 방해하지 않게
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastScrollWork < 33) return
+        lastScrollWork = now
+        updateThumb()
+        updateBottomState()
+        if (snapImg) { handler.removeCallbacks(analyzeRun); handler.postDelayed(analyzeRun, 500) } // 스크롤이 멈춘 뒤 갱신
+        if (saving && curKey != null) { handler.removeCallbacks(saveRun); handler.postDelayed(saveRun, 800) }
+    }
+
+    /** 맨 아래 도달 여부에 따라 '다음화' 버튼 표시, 자동 스크롤 중이면 다음 화로 이동 예약 */
+    private fun updateBottomState() {
         val b = atBottom()
         if (b != atBottomShown) { atBottomShown = b; nextBtn.visibility = if (b) View.VISIBLE else View.GONE
             if (b && auto && autoNext) { applyAuto(false); armResume(); handler.postDelayed({ if (resumeAuto) goNext() }, 1200) } }
-        if (saving && curKey != null) { handler.removeCallbacks(saveRun); handler.postDelayed(saveRun, 800) }
     }
 
     // ---- 다음화 ----
@@ -842,15 +852,24 @@ class MainActivity : Activity() {
         val a = JSONArray(prefs.getString("pos", "[]"))
         return MutableList(a.length()) { val o = a.getJSONObject(it); Pos(o.getString("k"), o.getInt("y"), o.getDouble("r").toFloat(), o.getBoolean("e"), o.optBoolean("t", false), o.optInt("s", 100)) }
     }
-    private fun savePosNow() {
+    private val posExec = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r).apply { priority = Thread.MIN_PRIORITY; isDaemon = true } }
+    private val posLock = Any()
+    private fun savePosNow(sync: Boolean = false) {
         val k = curKey ?: return
         if (!saving || web.scrollY <= 0) return
-        val l = loadPos(); l.removeAll { it.key == k }
-        val h = (web.contentHeight * density).coerceAtLeast(1f)
-        l.add(Pos(k, web.scrollY, web.scrollY / h, expanded, two, imgScale))
-        while (l.size > 300) l.removeAt(0)
-        val a = JSONArray(); l.forEach { a.put(JSONObject().put("k", it.key).put("y", it.y).put("r", it.ratio.toDouble()).put("e", it.exp).put("t", it.two).put("s", it.sc)) }
-        prefs.edit().putString("pos", a.toString()).apply()
+        // 화면 값은 UI 스레드에서 읽고, 목록 갱신/JSON 변환/저장은 백그라운드에서 처리(스크롤 중 끊김 방지)
+        val y = web.scrollY; val h = (web.contentHeight * density).coerceAtLeast(1f)
+        val ex = expanded; val tw = two; val sc = imgScale
+        val job = Runnable {
+            synchronized(posLock) {
+                val l = loadPos(); l.removeAll { it.key == k }
+                l.add(Pos(k, y, y / h, ex, tw, sc))
+                while (l.size > 300) l.removeAt(0)
+                val a = JSONArray(); l.forEach { a.put(JSONObject().put("k", it.key).put("y", it.y).put("r", it.ratio.toDouble()).put("e", it.exp).put("t", it.two).put("s", it.sc)) }
+                prefs.edit().putString("pos", a.toString()).apply()
+            }
+        }
+        if (sync) job.run() else posExec.execute(job)
     }
     private fun restorePos(key: String) {
         val p = loadPos().firstOrNull { it.key == key }
