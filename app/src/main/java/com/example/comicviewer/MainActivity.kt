@@ -115,7 +115,7 @@ class MainActivity : Activity() {
                 handler.removeCallbacksAndMessages(null)
                 snapInfo = null
                 analyzer.cancelPending() // 이전 페이지 이미지 분석이 새 페이지 로딩과 대역폭/연결을 다투지 않게 중단
-                curKey = null; saving = false; atBottomShown = false; nextBtn.visibility = View.GONE
+                curKey = null; saving = false; titleStable = 0; atBottomShown = false; nextBtn.visibility = View.GONE
                 syncUrl(u)
             }
             override fun doUpdateVisitedHistory(v: WebView, u: String, isReload: Boolean) { syncUrl(u) } // 리다이렉트·SPA 이동 포함, 실제 현재 주소 반영
@@ -810,17 +810,29 @@ class MainActivity : Activity() {
         prefs.edit().putString("series", a.toString()).apply()
     }
 
+    private var lastTitle = ""
+    private var titleStable = 0
+
+    /** 현재 페이지를 식별하는 키를 정해 읽던 위치를 복원/저장. 제목에서 '웹툰명+N화'를 읽으면 그것(주소가 바뀌어도 유지), 못 읽으면 주소 */
     private fun checkTitle() {
-        val title = web.title ?: return
-        val (name, ep) = parseTitle(title) ?: return
-        val key = norm(name) + "|" + ep
+        val url = web.url
+        if (url.isNullOrEmpty() || url == "about:blank") return
+        val title = web.title ?: ""
+        if (title == lastTitle) titleStable++ else { lastTitle = title; titleStable = 0 }
+        val parsed = parseTitle(title)
+        // 제목이 'N화' 형식이 아니면: 로딩이 끝나고 제목이 2회 연속 같을 때(제목이 늦게 바뀌는 사이트 대기) 주소를 키로 사용
+        if (parsed == null && (web.progress < 100 || titleStable < 2)) return
+        val key = if (parsed != null) norm(parsed.first) + "|" + parsed.second else "u|" + url.substringBefore('#')
         if (key == curKey) return
-        curKey = key; saving = false // 새 화로 바뀌면(SPA 포함) 복원이 끝나기 전엔 저장하지 않음
+        curKey = key; saving = false // 새 화/페이지로 바뀌면(SPA 포함) 복원이 끝나기 전엔 저장하지 않음
         if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) } // 자동으로 다음 화에 넘어왔으면 2초 뒤부터 다시 스크롤
-        val l = loadSeries()
-        val s = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
-        s.name = name; s.last = ep; s.max = maxOf(s.max, ep); s.eps.add(ep); s.url = web.url ?: s.url; s.time = System.currentTimeMillis()
-        saveSeries(l)
+        if (parsed != null) {
+            val (name, ep) = parsed
+            val l = loadSeries()
+            val sr = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
+            sr.name = name; sr.last = ep; sr.max = maxOf(sr.max, ep); sr.eps.add(ep); sr.url = web.url ?: sr.url; sr.time = System.currentTimeMillis()
+            saveSeries(l)
+        }
         restorePos(key)
     }
 
