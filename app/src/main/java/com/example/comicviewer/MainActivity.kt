@@ -567,7 +567,6 @@ class MainActivity : Activity() {
             start()
         }
     }
-    }
 
     /**
      * 단색 판정 영역 편집기: 화면에 사각형을 띄워 드래그(이동)·모서리(크기)로 지정.
