@@ -154,7 +154,6 @@ class MainActivity : Activity() {
         nextBtn.setOnClickListener { goNext() }
         findViewById<View>(R.id.editBtn).setOnClickListener {
             editMode = !editMode; applyEditVisual()
-            if (editMode) Toast.makeText(this, "버튼을 끌어 이동", Toast.LENGTH_SHORT).show()
         }
         findViewById<View>(R.id.downBtn).setOnClickListener { pageScroll(1) }
         findViewById<View>(R.id.topBtn).setOnClickListener { pageAnim?.cancel(); applyAuto(false); web.scrollTo(0, 0) }
@@ -197,18 +196,18 @@ class MainActivity : Activity() {
         if (!urlInput.hasFocus() && urlInput.text.toString() != u) urlInput.setText(u)
     }
 
-    private fun go(raw: String, notify: Boolean = false) {
+    private fun go(raw: String) {
         resumeAuto = false
         urlInput.clearFocus()
         var u = raw.trim(); if (u.isEmpty()) return
         if (!u.contains("://")) u = if (u.contains(".") && !u.contains(" ")) "https://$u" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(u, "utf-8")
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(urlInput.windowToken, 0)
-        if (notify) Toast.makeText(this, "열기 · ${android.net.Uri.parse(u).host ?: u}", Toast.LENGTH_SHORT).show() // 북마크/기록 탭 반응 확인용
         web.stopLoading()
         web.loadUrl(u)
     }
 
-    private fun applyCalm() { findViewById<View>(R.id.refDot).visibility = if (calmMode) View.VISIBLE else View.GONE }
+    /** 멀미 방지의 중앙 기준점: 화면이 연속으로 흐르는 동안(연속 자동/꾹 누름)만 표시 */
+    private fun applyCalm() { findViewById<View>(R.id.refDot).visibility = if (calmMode && ((auto && !autoPageMode) || holding)) View.VISIBLE else View.GONE }
 
     private fun applyKeepOn() {
         if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -245,11 +244,12 @@ class MainActivity : Activity() {
     // ---- ▼ 꾹 누르면 누르는 동안 연속 스크롤(속도 설정) ----
     private var holding = false
     private val holdFrame = object : Choreographer.FrameCallback {
-        var last = 0L; var acc = 0f
+        var last = 0L; var acc = 0f; var t0 = 0L
         override fun doFrame(t: Long) {
             if (!holding) return
+            if (t0 == 0L) t0 = t
             if (last != 0L) {
-                acc += holdSpeed * (t - last) / 1e9f
+                acc += holdSpeed * (if (calmMode) minOf(1f, (t - t0) / 1.0e9f) else 1f) * (t - last) / 1e9f
                 val d = acc.toInt()
                 if (d != 0) { web.scrollBy(0, d); acc -= d }
                 if (atBottom()) { stopHold(); return }
@@ -258,8 +258,8 @@ class MainActivity : Activity() {
             Choreographer.getInstance().postFrameCallback(this)
         }
     }
-    private fun startHold() { holding = true; applyAuto(false); pageAnim?.cancel(); setFull(true); holdFrame.last = 0L; holdFrame.acc = 0f; Choreographer.getInstance().postFrameCallback(holdFrame) }
-    private fun stopHold() { holding = false; Choreographer.getInstance().removeFrameCallback(holdFrame) }
+    private fun startHold() { holding = true; applyAuto(false); pageAnim?.cancel(); setFull(true); holdFrame.last = 0L; holdFrame.acc = 0f; holdFrame.t0 = 0L; applyCalm(); Choreographer.getInstance().postFrameCallback(holdFrame) }
+    private fun stopHold() { holding = false; Choreographer.getInstance().removeFrameCallback(holdFrame); applyCalm() }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun initDraggableButtons() {
@@ -478,7 +478,7 @@ class MainActivity : Activity() {
         if (System.currentTimeMillis() < quietUntil && !userScrolling()) { updateThumb(); return } // 두쪽 준비 중 코드 스크롤만 무시(손가락 스크롤은 처리)
         if (System.currentTimeMillis() > fullLockUntil) { // 아래로 스크롤=메뉴 숨김, 위로 스크롤(또는 맨 위)=메뉴 표시
             dyAcc = if ((dyAcc > 0) == (dy > 0)) dyAcc + dy else dy
-            if (dyAcc > 40) setFull(true) else if (userScrolling() && (dyAcc < -60 || y < 20)) setFull(false)
+            if (dyAcc > 40) setFull(true) else if (userScrolling() && (dyAcc < -140 * density || y < 20)) setFull(false)
         }
         // 나머지 부가 작업(스크롤바·바닥 감지·저장/분석 예약)은 초당 30회 이하로 제한: 웹뷰 값 조회와 핸들러 작업이 이동 애니메이션을 방해하지 않게
         val now = android.os.SystemClock.uptimeMillis()
@@ -527,33 +527,46 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
-        if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, smoothMs); return }
+        if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, if (calmMode) calmJumpMs else smoothMs); return }
         // 이동은 바로 시작: 직전에 갱신해 둔 이미지 위치 정보가 신선하면 그것으로 경계를 계산하고, 없으면 일반 이동 후 정보를 갱신
         val info = snapInfo
         if (info == null || System.currentTimeMillis() - snapInfoAt > 6000) {
-            animateScroll(dist); onDecided?.invoke(1f, smoothMs); scheduleAnalysis(); return
+            animateScroll(dist); onDecided?.invoke(1f, if (calmMode) calmJumpMs else smoothMs); scheduleAnalysis(); return
         }
         val d = computeSnap(info, dist, finalH)
         // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
         val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8)
         animateScroll(d ?: dist, ms)
-        onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), ms)
+        onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), if (calmMode) calmJumpMs else ms)
     }
 
     private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
+    private var jumpPending = false
+    private val calmJumpMs = 250
     private fun animateScroll(dist: Int, ms: Int = smoothMs) {
         pageAnim?.cancel()
         animTargetY = web.scrollY + dist
+        if (calmMode) { // 멀미 방지: 화면이 흐르지 않게 짧게 어두워졌다가(90ms) 이동한 화면이 나타남(160ms)
+            val fade = findViewById<View>(R.id.fadeView)
+            jumpPending = true
+            fade.animate().cancel()
+            fade.animate().alpha(1f).setDuration(90).withEndAction {
+                web.scrollBy(0, animTargetY - web.scrollY); jumpPending = false
+                fade.animate().alpha(0f).setDuration(160).start()
+            }.start()
+            return
+        }
         if (ms == 0) { web.scrollBy(0, dist); return }
         var done = 0
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ms.toLong(); interpolator = if (calmMode) android.view.animation.LinearInterpolator() else AccelerateDecelerateInterpolator() // 멀미 방지: 가감속 없이 일정한 속도
+            duration = ms.toLong(); interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener {
                 val target = (it.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
             }
             start()
         }
+    }
     }
 
     /**
@@ -702,7 +715,7 @@ class MainActivity : Activity() {
     private fun computeSnap(parsed: Parsed, dist: Int, viewH: Int): Int? {
         val bands = bandsOf(parsed)
         // 이동 애니메이션이 진행 중이면 그 목표 위치를 현재 위치로 사용(연타 시 어긋남 방지)
-        val curPx = if (pageAnim?.isRunning == true) animTargetY else web.scrollY
+        val curPx = if (pageAnim?.isRunning == true || jumpPending) animTargetY else web.scrollY
         val cur = curPx / density; val hCss = viewH / density
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density
@@ -770,7 +783,7 @@ class MainActivity : Activity() {
 
     private fun applyAuto(v: Boolean) {
         if (auto == v) return
-        auto = v; autoBtn.text = if (v) "stop" else "auto"
+        auto = v; autoBtn.text = if (v) "stop" else "auto"; applyCalm()
         if (v) {
             pageAnim?.cancel()
             if (autoPageMode) handler.post(pageAutoRun)
@@ -908,7 +921,7 @@ class MainActivity : Activity() {
         fun label(s: Series) = "${s.name}\n마지막 ${s.last}화 · 최대 ${s.max}화 · 읽은 화 ${s.eps.size}개 · ${fmt.format(java.util.Date(s.time))}"
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, l.map { label(it) }.toMutableList())
         val dlg = AlertDialog.Builder(this).setTitle("기록")
-            .setAdapter(ad) { _, i -> if (l[i].url.isNotEmpty()) go(l[i].url, true) else Toast.makeText(this, "저장된 주소 없음", Toast.LENGTH_SHORT).show() }
+            .setAdapter(ad) { _, i -> if (l[i].url.isNotEmpty()) go(l[i].url) else Toast.makeText(this, "저장된 주소 없음", Toast.LENGTH_SHORT).show() }
             .setNegativeButton("닫기", null).create()
         dlg.show()
         dlg.listView.setOnItemLongClickListener { _, _, i, _ ->
@@ -935,7 +948,7 @@ class MainActivity : Activity() {
         val list = loadBookmarks()
         val ad = ArrayAdapter(this, android.R.layout.simple_list_item_1, list.map { it.first }.toMutableList())
         val dlg = AlertDialog.Builder(this).setTitle("북마크")
-            .setAdapter(ad) { _, i -> go(list[i].second, true) }
+            .setAdapter(ad) { _, i -> go(list[i].second) }
             .setPositiveButton("추가") { _, _ ->
                 val u = web.url ?: return@setPositiveButton
                 val t = web.title?.takeIf { it.isNotBlank() } ?: u
@@ -960,22 +973,36 @@ class MainActivity : Activity() {
 
     // ---- 설정 ----
     private fun showSettings() {
-        val pad = (16 * density).toInt()
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, 0, pad, pad) }
-        var needInject = false; var needReload = false
         val dp = { v: Int -> (v * density).toInt() }
-        fun group(t: String) {
-            box.addView(View(this).apply { setBackgroundColor(0x33888888) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { topMargin = dp(18) })
-            box.addView(TextView(this).apply { text = t; textSize = 12f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(8), 0, 0) })
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), dp(16)) }
+        var needInject = false; var needReload = false
+        var cur: LinearLayout = box // 지금 항목을 넣을 곳
+        fun col() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        /** 제목을 누르면 펼쳐지는 그룹 */
+        fun group(t: String, open: Boolean = false, body: () -> Unit) {
+            val c = col().apply { visibility = if (open) View.VISIBLE else View.GONE }
+            val head = TextView(this).apply {
+                textSize = 16f; setTypeface(null, android.graphics.Typeface.BOLD); setPadding(0, dp(14), 0, dp(14))
+                text = (if (open) "▾  " else "▸  ") + t
+                setOnClickListener { val show = c.visibility != View.VISIBLE; c.visibility = if (show) View.VISIBLE else View.GONE; text = (if (show) "▾  " else "▸  ") + t }
+            }
+            box.addView(View(this).apply { setBackgroundColor(0x33888888) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+            box.addView(head); box.addView(c)
+            cur = c; body(); cur = box
         }
-        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = box.addView(Switch(this).apply { text = t; isChecked = v; setPadding(0, dp(6), 0, dp(6)); setOnCheckedChangeListener { _, c -> f(c) } })
+        /** 상위 스위치가 켜졌을 때만 보이는 하위 묶음(들여쓰기) */
+        fun sub(show: Boolean, body: () -> Unit): LinearLayout {
+            val c = col().apply { setPadding(dp(16), 0, 0, 0); visibility = if (show) View.VISIBLE else View.GONE }
+            val prev = cur; prev.addView(c); cur = c; body(); cur = prev
+            return c
+        }
+        fun sw(t: String, v: Boolean, f: (Boolean) -> Unit) = cur.addView(Switch(this).apply { text = t; isChecked = v; setPadding(0, dp(8), 0, dp(8)); setOnCheckedChangeListener { _, c -> f(c) } })
         fun bar(t: String, min: Int, max: Int, v: Int, fmt: (Int) -> String, f: (Int) -> Unit) {
-            val name = TextView(this).apply { text = t }
             val value = TextView(this).apply { text = fmt(v); setTextColor(0xFF888888.toInt()) }
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
-            row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); row.addView(value)
-            box.addView(row)
-            box.addView(SeekBar(this).apply {
+            row.addView(TextView(this).apply { text = t }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); row.addView(value)
+            cur.addView(row)
+            cur.addView(SeekBar(this).apply {
                 this.max = max - min; progress = v - min
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, p: Int, u: Boolean) { value.text = fmt(p + min); f(p + min) }
@@ -984,74 +1011,78 @@ class MainActivity : Activity() {
                 })
             })
         }
-        fun btn(t: String, onClick: (Button) -> Unit) = box.addView(Button(this).apply { text = t; isAllCaps = false; setOnClickListener { onClick(this) } })
-
-        group("보기")
-        sw("두쪽", two) { val was = two; two = it; if (was && !it) needReload = true else needInject = true }
-        sw("오른쪽 → 왼쪽", rtl) { rtl = it; needInject = true }
-        bar("여백", 0, 60, gap, { "${it}px" }) { gap = it; needInject = true }
-        bar(if (expanded) "이미지 너비 · 펼침" else "이미지 너비 · 접힘", 30, 100, imgScale, { "$it%" }) { imgScale = it; applyScale() }
-        sw("펼치면 두쪽", foldAutoTwo) { foldAutoTwo = it }
-
-        group("화면")
-        sw("켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
-        sw("멀미 방지", calmMode) { calmMode = it; applyCalm() }
-        bar("버튼 크기", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
-        bar("버튼 투명도", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
-        btn("버튼 위치 초기화") { resetBtnPositions() }
-
-        group("이동")
-        bar("거리", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
-        bar("거리 · 두쪽", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
-        bar("시간", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
-        bar("꾹 누름 속도", 100, 5000, holdSpeed, { "${it}px/s" }) { holdSpeed = it / 50 * 50 }
-
-        group("자동")
-        sw("페이지 단위", autoPageMode) { autoPageMode = it }
-        bar("속도", 20, 2000, autoSpeed, { "${it}px/s" }) { autoSpeed = it / 10 * 10 }
-        box.addView(EditText(this).apply {
-            hint = "대기 (초)"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            setText(String.format(java.util.Locale.US, "%.1f", autoWait / 10f))
-            addTextChangedListener(object : android.text.TextWatcher {
-                override fun afterTextChanged(e: android.text.Editable?) {
-                    e?.toString()?.toFloatOrNull()?.let { autoWait = (it * 10).toInt().coerceIn(1, 3600) } // 0.1초~360초
-                }
-                override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
-                override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+        /** '이름 [숫자] 초' 한 줄 입력 (0.1초 단위 값) */
+        fun secs(t: String, tenths: Int, f: (Int) -> Unit) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(TextView(this).apply { text = t }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(EditText(this).apply {
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                setText(String.format(java.util.Locale.US, "%.1f", tenths / 10f)); gravity = Gravity.END; minWidth = dp(64)
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun afterTextChanged(e: android.text.Editable?) { e?.toString()?.toFloatOrNull()?.let { f((it * 10).toInt()) } }
+                    override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+                    override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+                })
             })
-        })
-        sw("경계 이동은 대기 단축", autoWaitScale) { autoWaitScale = it }
-        box.addView(EditText(this).apply {
-            hint = "최소 대기 (초)"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            setText(String.format(java.util.Locale.US, "%.1f", autoWaitMin / 10f))
-            addTextChangedListener(object : android.text.TextWatcher {
-                override fun afterTextChanged(e: android.text.Editable?) {
-                    e?.toString()?.toFloatOrNull()?.let { autoWaitMin = (it * 10).toInt().coerceIn(0, 3600) }
-                }
-                override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
-                override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
-            })
-        })
-        sw("끝에서 다음화", autoNext) { autoNext = it }
+            row.addView(TextView(this).apply { text = "초" })
+            cur.addView(row)
+        }
+        fun btn(t: String, onClick: () -> Unit) = cur.addView(Button(this).apply { text = t; isAllCaps = false; setOnClickListener { onClick() } })
 
-        group("경계")
-        sw("경계에서 멈춤", snapImg) { snapImg = it; if (it) scheduleAnalysis() }
-        bar("멈춤 아래 여백", 0, 30, stopBottomPct, { "$it%" }) { stopBottomPct = it }
-        sw("멈춘 뒤 건너뜀", skipBand) { skipBand = it }
-        bar("건너뜀 위 여백", 0, 30, skipTopPct, { "$it%" }) { skipTopPct = it }
-        bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
-        bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
-        btn("영역 ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }
-
-        group("광고")
-        btn("광고 제거") {
-            settingsDlg?.dismiss()
-            handler2.postDelayed({ // 닫힘 리스너(변경 적용/새로고침)가 먼저 끝난 뒤 실행
-                injectScript(); setFull(true)
-                web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
-            }, 400)
+        group("보기", open = true) {
+            lateinit var twoSub: LinearLayout
+            sw("두쪽", two) { val was = two; two = it; twoSub.visibility = if (it) View.VISIBLE else View.GONE; if (was && !it) needReload = true else needInject = true }
+            twoSub = sub(two) {
+                sw("오른쪽 → 왼쪽", rtl) { rtl = it; needInject = true }
+                bar("가운데 여백", 0, 60, gap, { "${it}px" }) { gap = it; needInject = true }
+            }
+            sw("펼치면 두쪽", foldAutoTwo) { foldAutoTwo = it }
+            bar(if (expanded) "이미지 너비 · 펼침" else "이미지 너비 · 접힘", 30, 100, imgScale, { "$it%" }) { imgScale = it; applyScale() }
+            sw("화면 켜짐 유지", keepOn) { keepOn = it; applyKeepOn() }
+            sw("멀미 방지", calmMode) { calmMode = it; applyCalm() }
+        }
+        group("이동") {
+            if (two) bar("거리", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
+            else bar("거리", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
+            bar("시간", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
+            bar("꾹 누름 속도", 100, 5000, holdSpeed, { "${it}px/s" }) { holdSpeed = it / 50 * 50 }
+        }
+        group("자동") {
+            lateinit var pageSub: LinearLayout; lateinit var flowSub: LinearLayout; lateinit var minSub: LinearLayout
+            sw("한 페이지씩", autoPageMode) { autoPageMode = it; pageSub.visibility = if (it) View.VISIBLE else View.GONE; flowSub.visibility = if (it) View.GONE else View.VISIBLE }
+            pageSub = sub(autoPageMode) {
+                secs("대기", autoWait) { autoWait = it.coerceIn(1, 3600) }
+                sw("짧게 이동하면 덜 대기", autoWaitScale) { autoWaitScale = it; minSub.visibility = if (it) View.VISIBLE else View.GONE }
+                minSub = sub(autoWaitScale) { secs("최소 대기", autoWaitMin) { autoWaitMin = it.coerceIn(0, 3600) } }
+            }
+            flowSub = sub(!autoPageMode) { bar("속도", 20, 2000, autoSpeed, { "${it}px/s" }) { autoSpeed = it / 10 * 10 } }
+            sw("끝나면 다음화", autoNext) { autoNext = it }
+        }
+        group("경계") {
+            lateinit var snapSub: LinearLayout; lateinit var skipSub: LinearLayout
+            sw("경계에서 멈춤", snapImg) { snapImg = it; snapSub.visibility = if (it) View.VISIBLE else View.GONE; if (it) scheduleAnalysis() }
+            snapSub = sub(snapImg) {
+                bar("아래 여백", 0, 30, stopBottomPct, { "$it%" }) { stopBottomPct = it }
+                sw("다음엔 건너뜀", skipBand) { skipBand = it; skipSub.visibility = if (it) View.VISIBLE else View.GONE }
+                skipSub = sub(skipBand) { bar("위 여백", 0, 30, skipTopPct, { "$it%" }) { skipTopPct = it } }
+                bar("무시 구간", 0, 90, ignorePct, { "${it}%" }) { ignorePct = it }
+                bar("색 차이 허용", 1, 40, colorTol, { "${it}%" }) { colorTol = it; handler2.removeCallbacks(rescan); handler2.postDelayed(rescan, 700) }
+                btn("판정 영역  ${blackL}% · ${blackW}% · ${blackH}dp") { settingsDlg?.dismiss(); showRegionEditor() }
+            }
+        }
+        group("버튼") {
+            bar("크기", 32, 96, btnSize, { "${it}dp" }) { btnSize = it; applyBtnSize() }
+            bar("투명도", 20, 100, btnAlpha, { "$it%" }) { btnAlpha = it; applyBtnAlpha() }
+            btn("위치 초기화") { resetBtnPositions() }
+        }
+        group("광고") {
+            btn("광고 제거") {
+                settingsDlg?.dismiss()
+                handler2.postDelayed({ // 닫힘 리스너(변경 적용/새로고침)가 먼저 끝난 뒤 실행
+                    injectScript(); setFull(true)
+                    web.evaluateJavascript("window.__cvEx&&window.__cvEx(true)", null)
+                }, 400)
+            }
         }
         box.isFocusableInTouchMode = true; box.descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS; box.requestFocus() // 처음 포커스가 입력칸으로 가서 아래로 스크롤되는 것 방지
         val sv = ScrollView(this).apply { addView(box) }

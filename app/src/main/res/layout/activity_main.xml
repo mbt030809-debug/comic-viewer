@@ -40,6 +40,10 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- 멀미 방지 모드의 페이지 이동용 암전 막(터치는 통과) -->
+    <View android:id="@+id/fadeView" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:background="#000000" android:alpha="0" />
+
     <!-- 멀미 방지 모드의 화면 중앙 기준점 -->
     <View android:id="@+id/refDot" android:layout_width="8dp" android:layout_height="8dp"
         android:layout_gravity="center" android:background="@drawable/ref_dot" android:visibility="gone" />
