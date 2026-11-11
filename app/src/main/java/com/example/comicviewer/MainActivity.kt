@@ -873,7 +873,7 @@ class MainActivity : Activity() {
         return name to ep
     }
 
-    private class Series(var name: String, val key: String, var last: Int, var max: Int, val eps: MutableSet<Int>, var url: String, var time: Long)
+    private class Series(var name: String, val key: String, var last: Int, var max: Int, val eps: MutableSet<Int>, var url: String, var time: Long, var base: String = "")
 
     private fun loadSeries(): MutableList<Series> = try { loadSeriesRaw() } catch (_: Exception) { mutableListOf() }
     private fun loadSeriesRaw(): MutableList<Series> {
@@ -882,17 +882,38 @@ class MainActivity : Activity() {
             val o = a.getJSONObject(it)
             val e = o.getJSONArray("eps")
             Series(o.getString("n"), o.getString("k"), o.getInt("last"), o.getInt("max"),
-                MutableList(e.length()) { i -> e.getInt(i) }.toMutableSet(), o.getString("u"), o.getLong("t"))
+                MutableList(e.length()) { i -> e.getInt(i) }.toMutableSet(), o.getString("u"), o.getLong("t"), o.optString("b", ""))
         }
     }
     private fun saveSeries(l: List<Series>) {
         val a = JSONArray()
         l.forEach { a.put(JSONObject().put("n", it.name).put("k", it.key).put("last", it.last).put("max", it.max)
-            .put("eps", JSONArray(it.eps.sorted())).put("u", it.url).put("t", it.time)) }
+            .put("eps", JSONArray(it.eps.sorted())).put("u", it.url).put("t", it.time).put("b", it.base)) }
         prefs.edit().putString("series", a.toString()).apply()
     }
 
     private var lastTitle = ""
+    private fun parentUrl(u: String?): String? {
+        val x = u?.substringBefore('#')?.substringBefore('?')?.trimEnd('/') ?: return null
+        val i = x.lastIndexOf('/'); val schemeEnd = x.indexOf("://") + 2
+        return if (i > schemeEnd + 1 && x.substring(schemeEnd + 1, i).contains('/')) x.substring(0, i) else null // 경로가 2단계 이상일 때만
+    }
+    private fun cleanUrl(u: String?) = u?.substringBefore('#')?.substringBefore('?')?.trimEnd('/')
+
+    /** 웹툰 첫 페이지(회차 목록): 주소가 저장된 목록 주소와 같거나, 제목/본문에 저장된 웹툰명이 있으면 마지막으로 본 화를 알림 */
+    private fun showSeriesNotice(key: String, retry: Int = 0) {
+        if (curKey != key) return
+        val all = loadSeries()
+        fun toast(sr: Series) = Toast.makeText(this, "${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) " (최대 ${sr.max}화)" else "", Toast.LENGTH_LONG).show()
+        val here = cleanUrl(web.url)
+        all.firstOrNull { it.base.isNotEmpty() && it.base == here }?.let { toast(it); return }
+        web.evaluateJavascript("(function(){var t=[document.title];var m=document.querySelector('meta[property=\"og:title\"]');if(m)t.push(m.content);[].forEach.call(document.querySelectorAll('h1,h2,h3'),function(e){t.push(e.innerText)});t.push((document.body&&document.body.innerText||'').slice(0,4000));return t.join(' ')})()") { r ->
+            if (curKey != key) return@evaluateJavascript
+            val text = norm(try { org.json.JSONTokener(r ?: "").nextValue() as? String ?: "" } catch (_: Exception) { "" })
+            val hit = all.filter { it.key.length >= 2 && text.contains(it.key) }.maxByOrNull { it.key.length }
+            if (hit != null) toast(hit) else if (retry < 2) handler.postDelayed({ showSeriesNotice(key, retry + 1) }, 2500) // 목록이 늦게 그려지는 사이트 대비
+        }
+    }
     private var titleStable = 0
 
     /** 현재 페이지를 식별하는 키를 정해 읽던 위치를 복원/저장. 제목에서 '웹툰명+N화'를 읽으면 그것(주소가 바뀌어도 유지), 못 읽으면 주소 */
@@ -912,15 +933,11 @@ class MainActivity : Activity() {
             val (name, ep) = parsed
             val l = loadSeries()
             val sr = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
+            parentUrl(web.url)?.let { sr.base = it }
             sr.name = name; sr.last = ep; sr.max = maxOf(sr.max, ep); sr.eps.add(ep); sr.url = web.url ?: sr.url; sr.time = System.currentTimeMillis()
             saveSeries(l)
         }
-        else { // 회차 목록 같은 웹툰 첫 페이지: 제목에 저장된 웹툰명이 들어 있으면 마지막으로 본 화를 알림
-            val nt = norm(title)
-            loadSeries().filter { it.key.length >= 2 && nt.contains(it.key) }.maxByOrNull { it.key.length }?.let {
-                Toast.makeText(this, "${it.name}  ${it.last}화까지 봄" + if (it.max > it.last) " (최대 ${it.max}화)" else "", Toast.LENGTH_LONG).show()
-            }
-        }
+        else showSeriesNotice(key)
         restorePos(key)
     }
 
