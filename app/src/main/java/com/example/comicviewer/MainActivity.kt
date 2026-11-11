@@ -164,6 +164,7 @@ class MainActivity : Activity() {
             if (w > 0 && w != orr - ol) { val first = rootW == 0; rootW = w; if (!first) onWidthChanged() else { applyScale(); if (foldAutoTwo && two != expanded) { two = expanded; updateTwoBtn() } } }
         }
 
+        checkUpdate()
         val shared = intent?.dataString ?: intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
         go(shared ?: prefs.getString("last", null) ?: "https://www.google.com")
     }
@@ -179,8 +180,8 @@ class MainActivity : Activity() {
         injectScript()
     }
 
-    override fun onDestroy() { analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
-    override fun onPause() { syncUrl(web.url); touching = false; applyAuto(false); stopHold(); savePosNow(sync = true); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
+    override fun onDestroy() { updateReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }; analyzer.shutdown(); applyAuto(false); stopHold(); handler.removeCallbacksAndMessages(null); handler2.removeCallbacksAndMessages(null); web.destroy(); super.onDestroy() }
+    override fun onPause() { calmSeconds = 0; syncUrl(web.url); touching = false; applyAuto(false); stopHold(); savePosNow(sync = true); web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
     override fun onResume() { super.onResume(); web.onResume() }
     @Deprecated("") override fun onBackPressed() { if (closeRegionEditor()) return; if (web.canGoBack()) web.goBack() else super.onBackPressed() }
     override fun onKeyDown(k: Int, e: KeyEvent): Boolean = when (k) {
@@ -208,6 +209,49 @@ class MainActivity : Activity() {
 
     /** 멀미 방지의 중앙 기준점: 화면이 연속으로 흐르는 동안(연속 자동/꾹 누름)만 표시 */
     private fun applyCalm() { findViewById<View>(R.id.refDot).visibility = if (calmMode && ((auto && !autoPageMode) || holding)) View.VISIBLE else View.GONE }
+
+    // ---- 업데이트: 실행할 때 GitHub 최신 빌드 번호를 확인하고, 새 버전이면 내려받아 설치 화면을 띄움 ----
+    private val relBase = "https://github.com/mbt030809-debug/comic-viewer/releases/download/latest/"
+    private var updateReceiver: android.content.BroadcastReceiver? = null
+    private fun checkUpdate() {
+        Thread {
+            try {
+                val c = java.net.URL(relBase + "version.txt").openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 8000; c.readTimeout = 8000
+                val remote = c.inputStream.bufferedReader().use { it.readText() }.trim().toIntOrNull() ?: return@Thread
+                @Suppress("DEPRECATION") val cur = packageManager.getPackageInfo(packageName, 0).versionCode
+                if (remote > cur) runOnUiThread {
+                    if (!isFinishing) AlertDialog.Builder(this).setTitle("새 버전").setPositiveButton("업데이트") { _, _ -> startUpdate() }.setNegativeButton("나중에", null).show()
+                }
+            } catch (_: Exception) { /* 오프라인 등: 조용히 넘어감 */ }
+        }.start()
+    }
+    private fun startUpdate() {
+        try {
+            java.io.File(getExternalFilesDir(null), "update.apk").delete()
+            val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
+            val mime = "application/vnd.android.package-archive"
+            val id = dm.enqueue(android.app.DownloadManager.Request(android.net.Uri.parse(relBase + "comic-viewer.apk"))
+                .setTitle("만화 뷰어 업데이트").setMimeType(mime)
+                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalFilesDir(this, null, "update.apk"))
+            Toast.makeText(this, "내려받는 중", Toast.LENGTH_SHORT).show()
+            val r = object : android.content.BroadcastReceiver() {
+                override fun onReceive(ctx: android.content.Context, i: android.content.Intent) {
+                    if (i.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return
+                    try { unregisterReceiver(this) } catch (_: Exception) {}
+                    updateReceiver = null
+                    val uri = dm.getUriForDownloadedFile(id)
+                    if (uri == null) { Toast.makeText(this@MainActivity, "내려받기 실패", Toast.LENGTH_SHORT).show(); return }
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                        .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+            updateReceiver = r
+            val f = android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, RECEIVER_EXPORTED) else registerReceiver(r, f)
+        } catch (_: Exception) { Toast.makeText(this, "업데이트 실패", Toast.LENGTH_SHORT).show() }
+    }
 
     private fun applyKeepOn() {
         if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -459,7 +503,8 @@ class MainActivity : Activity() {
             }
         }
         val tick = object : Runnable { override fun run() {
-            try { updateThumb(); updateBottomState(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis() } catch (_: Exception) { /* 저장 데이터 이상 등으로 1초 주기 작업이 앱을 종료시키지 않게 */ }
+            try { if (calmMode && ++calmSeconds >= 1200) { calmSeconds = 0; Toast.makeText(this@MainActivity, "20분 지남 · 잠깐 쉬기", Toast.LENGTH_LONG).show() }
+                updateThumb(); updateBottomState(); checkTitle(); if (++analyzeTick % 3 == 0) scheduleAnalysis() } catch (_: Exception) { /* 저장 데이터 이상 등으로 1초 주기 작업이 앱을 종료시키지 않게 */ }
             track.postDelayed(this, 1000)
         } }
         track.postDelayed(tick, 1000)
@@ -484,6 +529,7 @@ class MainActivity : Activity() {
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastScrollWork < 33) return
         lastScrollWork = now
+        flowTick()
         updateThumb()
         updateBottomState()
         if (snapImg) { handler.removeCallbacks(analyzeRun); handler.postDelayed(analyzeRun, 500) } // 스크롤이 멈춘 뒤 갱신
@@ -542,6 +588,20 @@ class MainActivity : Activity() {
 
     private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
     private var jumpPending = false
+    private var lastJumpAt = 0L
+    private var maskOn = false
+    private var calmSeconds = 0
+    private fun setMask(on: Boolean) {
+        maskOn = on
+        listOf(R.id.maskTop, R.id.maskBottom).forEach { findViewById<View>(it).animate().alpha(if (on) 1f else 0f).setDuration(if (on) 150L else 400L).start() }
+    }
+    private val hideMask = Runnable { setMask(false) }
+    /** 멀미 방지: 화면이 흐르는 동안에만 위아래 가장자리를 어둡게 덮어 움직이는 면적을 줄임(시야 제한) */
+    private fun flowTick() {
+        if (!calmMode || jumpPending || android.os.SystemClock.uptimeMillis() - lastJumpAt < 400) return
+        if (!maskOn) setMask(true)
+        handler2.removeCallbacks(hideMask); handler2.postDelayed(hideMask, 350)
+    }
     private val calmJumpMs = 250
     private fun animateScroll(dist: Int, ms: Int = smoothMs) {
         pageAnim?.cancel()
@@ -551,7 +611,7 @@ class MainActivity : Activity() {
             jumpPending = true
             fade.animate().cancel()
             fade.animate().alpha(1f).setDuration(90).withEndAction {
-                web.scrollBy(0, animTargetY - web.scrollY); jumpPending = false
+                lastJumpAt = android.os.SystemClock.uptimeMillis(); web.scrollBy(0, animTargetY - web.scrollY); jumpPending = false
                 fade.animate().alpha(0f).setDuration(160).start()
             }.start()
             return
