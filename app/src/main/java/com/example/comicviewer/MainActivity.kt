@@ -885,7 +885,8 @@ class MainActivity : Activity() {
                 MutableList(e.length()) { i -> e.getInt(i) }.toMutableSet(), o.getString("u"), o.getLong("t"), o.optString("b", ""))
         }
     }
-    private fun saveSeries(l: List<Series>) {
+    private fun saveSeries(all: List<Series>) {
+        val l = if (all.size > 5000) all.sortedByDescending { it.time }.take(5000) else all // 웹툰 기록: 최근 5000종류
         val a = JSONArray()
         l.forEach { a.put(JSONObject().put("n", it.name).put("k", it.key).put("last", it.last).put("max", it.max)
             .put("eps", JSONArray(it.eps.sorted())).put("u", it.url).put("t", it.time).put("b", it.base)) }
@@ -959,7 +960,7 @@ class MainActivity : Activity() {
             synchronized(posLock) {
                 val l = loadPos(); l.removeAll { it.key == k }
                 l.add(Pos(k, y, y / h, ex, tw, sc))
-                while (l.size > 300) l.removeAt(0)
+                while (l.size > 3000) l.removeAt(0) // 읽던 위치: 최근 3000개 화/페이지
                 val a = JSONArray(); l.forEach { a.put(JSONObject().put("k", it.key).put("y", it.y).put("r", it.ratio.toDouble()).put("e", it.exp).put("t", it.two).put("s", it.sc)) }
                 prefs.edit().putString("pos", a.toString()).apply()
             }
