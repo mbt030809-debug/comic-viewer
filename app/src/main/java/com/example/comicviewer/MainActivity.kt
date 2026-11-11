@@ -207,8 +207,7 @@ class MainActivity : Activity() {
         web.loadUrl(u)
     }
 
-    /** 멀미 방지의 중앙 기준점: 화면이 연속으로 흐르는 동안(연속 자동/꾹 누름)만 표시 */
-    private fun applyCalm() { findViewById<View>(R.id.refDot).visibility = if (calmMode && ((auto && !autoPageMode) || holding)) View.VISIBLE else View.GONE }
+    private fun applyCalm() { if (!calmMode) setMask(false) }
 
     // ---- 업데이트: 실행할 때 GitHub 최신 빌드 번호를 확인하고, 새 버전이면 내려받아 설치 화면을 띄움 ----
     private val relBase = "https://github.com/mbt030809-debug/comic-viewer/releases/download/latest/"
@@ -573,53 +572,42 @@ class MainActivity : Activity() {
         setFull(dir > 0)
         if (dir > 0 && autoNext && atBottom()) { goNext(); return }
         val dist = (finalH * (if (two) pageRatio2 else pageRatio) / 100f).toInt() * dir
-        if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, if (calmMode) calmJumpMs else smoothMs); return }
+        if (!snapImg) { animateScroll(dist); onDecided?.invoke(1f, smoothMs); return }
         // 이동은 바로 시작: 직전에 갱신해 둔 이미지 위치 정보가 신선하면 그것으로 경계를 계산하고, 없으면 일반 이동 후 정보를 갱신
         val info = snapInfo
         if (info == null || System.currentTimeMillis() - snapInfoAt > 6000) {
-            animateScroll(dist); onDecided?.invoke(1f, if (calmMode) calmJumpMs else smoothMs); scheduleAnalysis(); return
+            animateScroll(dist); onDecided?.invoke(1f, smoothMs); scheduleAnalysis(); return
         }
         val d = computeSnap(info, dist, finalH)
         // 이동 시간 설정은 '기본 이동 거리' 기준이므로, 실제 이동한 거리 비율만큼 보정해 속도가 일정하게 느껴지게 함
         val ms = if (d == null || dist == 0) smoothMs else (smoothMs * abs(d).toFloat() / abs(dist)).toInt().coerceIn(minOf(smoothMs, 120), smoothMs * 8)
         animateScroll(d ?: dist, ms)
-        onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), if (calmMode) calmJumpMs else ms)
+        onDecided?.invoke(if (d == null || dist == 0) 1f else (abs(d).toFloat() / abs(dist)).coerceIn(0f, 1f), ms)
     }
 
     private var animTargetY = 0 // 진행 중인 페이지 이동 애니메이션의 최종 scrollY(px)
-    private var jumpPending = false
-    private var lastJumpAt = 0L
     private var maskOn = false
     private var calmSeconds = 0
     private fun setMask(on: Boolean) {
         maskOn = on
+        findViewById<View>(R.id.refDot).visibility = if (on) View.VISIBLE else View.GONE
         listOf(R.id.maskTop, R.id.maskBottom).forEach { findViewById<View>(it).animate().alpha(if (on) 1f else 0f).setDuration(if (on) 150L else 400L).start() }
     }
     private val hideMask = Runnable { setMask(false) }
     /** 멀미 방지: 화면이 흐르는 동안에만 위아래 가장자리를 어둡게 덮어 움직이는 면적을 줄임(시야 제한) */
     private fun flowTick() {
-        if (!calmMode || jumpPending || android.os.SystemClock.uptimeMillis() - lastJumpAt < 400) return
+        if (!calmMode) return
         if (!maskOn) setMask(true)
         handler2.removeCallbacks(hideMask); handler2.postDelayed(hideMask, 350)
     }
-    private val calmJumpMs = 250
     private fun animateScroll(dist: Int, ms: Int = smoothMs) {
         pageAnim?.cancel()
         animTargetY = web.scrollY + dist
-        if (calmMode) { // 멀미 방지: 화면이 흐르지 않게 짧게 어두워졌다가(90ms) 이동한 화면이 나타남(160ms)
-            val fade = findViewById<View>(R.id.fadeView)
-            jumpPending = true
-            fade.animate().cancel()
-            fade.animate().alpha(1f).setDuration(90).withEndAction {
-                lastJumpAt = android.os.SystemClock.uptimeMillis(); web.scrollBy(0, animTargetY - web.scrollY); jumpPending = false
-                fade.animate().alpha(0f).setDuration(160).start()
-            }.start()
-            return
-        }
         if (ms == 0) { web.scrollBy(0, dist); return }
         var done = 0
         pageAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = ms.toLong(); interpolator = AccelerateDecelerateInterpolator()
+            duration = ms.toLong()
+            interpolator = if (calmMode) android.view.animation.PathInterpolator(0.37f, 0f, 0.63f, 1f) else AccelerateDecelerateInterpolator() // 멀미 방지: 아주 천천히 출발하고 천천히 멈춤(sine)
             addUpdateListener {
                 val target = (it.animatedValue as Float * dist).toInt()
                 web.scrollBy(0, target - done); done = target
@@ -774,7 +762,7 @@ class MainActivity : Activity() {
     private fun computeSnap(parsed: Parsed, dist: Int, viewH: Int): Int? {
         val bands = bandsOf(parsed)
         // 이동 애니메이션이 진행 중이면 그 목표 위치를 현재 위치로 사용(연타 시 어긋남 방지)
-        val curPx = if (pageAnim?.isRunning == true || jumpPending) animTargetY else web.scrollY
+        val curPx = if (pageAnim?.isRunning == true) animTargetY else web.scrollY
         val cur = curPx / density; val hCss = viewH / density
         val visH = if (two) 2 * hCss else hCss // 두쪽 보기는 오른쪽 칸 끝까지가 보이는 범위
         val d = abs(dist) / density

@@ -40,10 +40,6 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 멀미 방지 모드의 페이지 이동용 암전 막(터치는 통과) -->
-    <View android:id="@+id/fadeView" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:background="#000000" android:alpha="0" />
-
     <!-- 멀미 방지: 화면이 흐르는 동안 위아래를 어둡게 덮는 막(터치는 통과) -->
     <View android:id="@+id/maskTop" android:layout_width="match_parent" android:layout_height="130dp"
         android:layout_gravity="top" android:background="@drawable/mask_top" android:alpha="0" />
