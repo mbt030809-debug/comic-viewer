@@ -915,6 +915,12 @@ class MainActivity : Activity() {
             sr.name = name; sr.last = ep; sr.max = maxOf(sr.max, ep); sr.eps.add(ep); sr.url = web.url ?: sr.url; sr.time = System.currentTimeMillis()
             saveSeries(l)
         }
+        else { // 회차 목록 같은 웹툰 첫 페이지: 제목에 저장된 웹툰명이 들어 있으면 마지막으로 본 화를 알림
+            val nt = norm(title)
+            loadSeries().filter { it.key.length >= 2 && nt.contains(it.key) }.maxByOrNull { it.key.length }?.let {
+                Toast.makeText(this, "${it.name}  ${it.last}화까지 봄" + if (it.max > it.last) " (최대 ${it.max}화)" else "", Toast.LENGTH_LONG).show()
+            }
+        }
         restorePos(key)
     }
 
