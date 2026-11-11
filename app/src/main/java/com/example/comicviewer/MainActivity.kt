@@ -859,16 +859,17 @@ class MainActivity : Activity() {
 
     private fun norm(s: String) = s.lowercase().replace(Regex("[\\s\\p{Punct}·]"), "")
 
-    /** 탭 제목 → (웹툰명, 화수). 예: "웹툰명 12화 - 사이트" */
+    /** 탭 제목 → (웹툰명, 화수). "웹툰명 12화 - 사이트", "1화, 소제목 > 웹툰명 > 사이트" 등 */
     private fun parseTitle(t: String): Pair<String, Int>? {
-        val m = Regex("(\\d+)\\s*(화|회|편|話|话)").find(t)
-            ?: Regex("(?i)(?:ep\\.?|episode|chapter|ch\\.?)\\s*(\\d+)").find(t) ?: return null
+        val re1 = Regex("(\\d+)\\s*(화|회|편|話|话)"); val re2 = Regex("(?i)(?:ep\\.?|episode|chapter|ch\\.?)\\s*(\\d+)")
+        val segs = t.split(Regex("\\s*[>|·–—:/«»_]\\s*|\\s-\\s")).map { it.trim() }.filter { it.isNotEmpty() }
+        val idx = segs.indexOfFirst { re1.containsMatchIn(it) || re2.containsMatchIn(it) }
+        if (idx < 0) return null
+        val seg = segs[idx]
+        val m = re1.find(seg) ?: re2.find(seg) ?: return null
         val ep = m.groupValues[1].toIntOrNull() ?: return null
-        val sep = Regex("\\s[-|·–:]\\s")
-        var before = t.substring(0, m.range.first).trim().trimEnd(' ', '-', '|', ':', '·', '–').replace(Regex("\\s제$"), "").trim()
-        before = before.split(sep).lastOrNull()?.trim() ?: ""
-        var name = before
-        if (name.isEmpty()) name = t.substring(m.range.last + 1).trim(' ', '-', '|', ':', '·', '–').split(sep).firstOrNull()?.trim() ?: ""
+        var name = seg.substring(0, m.range.first).trim().trimEnd(',', ' ', '-').replace(Regex("\\s제$"), "").trim() // 같은 조각 안의 앞부분
+        if (name.isEmpty()) name = segs.getOrNull(idx - 1) ?: segs.getOrNull(idx + 1) ?: ""   // 없으면 앞 조각, 그다음 뒤 조각
         if (name.isEmpty()) return null
         return name to ep
     }
@@ -908,10 +909,10 @@ class MainActivity : Activity() {
         fun toast(sr: Series) = Toast.makeText(this, "${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) " (최대 ${sr.max}화)" else "", Toast.LENGTH_LONG).show()
         val here = cleanUrl(web.url)
         all.firstOrNull { it.base.isNotEmpty() && it.base == here }?.let { toast(it); return }
-        web.evaluateJavascript("(function(){var t=[document.title];var m=document.querySelector('meta[property=\"og:title\"]');if(m)t.push(m.content);[].forEach.call(document.querySelectorAll('h1,h2,h3'),function(e){t.push(e.innerText)});t.push((document.body&&document.body.innerText||'').slice(0,4000));return t.join(' ')})()") { r ->
+        web.evaluateJavascript("(function(){var t=[document.title];var m=document.querySelector('meta[property=\"og:title\"]');if(m)t.push(m.content);[].forEach.call(document.querySelectorAll('h1,h2,h3'),function(e){t.push(e.innerText)});t.push((document.body&&document.body.innerText||'').slice(0,1200));return t.join(' ')})()") { r ->
             if (curKey != key) return@evaluateJavascript
             val text = norm(try { org.json.JSONTokener(r ?: "").nextValue() as? String ?: "" } catch (_: Exception) { "" })
-            val hit = all.filter { it.key.length >= 2 && text.contains(it.key) }.maxByOrNull { it.key.length }
+            val hit = all.filter { it.key.length >= 2 && text.contains(it.key) }.minWithOrNull(compareBy<Series>({ text.indexOf(it.key) }, { -it.key.length })) // 가장 앞에 나오는 이름(제목 영역) 우선
             if (hit != null) toast(hit) else if (retry < 2) handler.postDelayed({ showSeriesNotice(key, retry + 1) }, 2500) // 목록이 늦게 그려지는 사이트 대비
         }
     }
@@ -923,15 +924,20 @@ class MainActivity : Activity() {
         if (url.isNullOrEmpty() || url == "about:blank") return
         val title = web.title ?: ""
         if (title == lastTitle) titleStable++ else { lastTitle = title; titleStable = 0 }
-        val parsed = parseTitle(title)
+        var parsed = parseTitle(title)
+        if (parsed != null) { // 같은 웹툰 목록 주소 아래 회차면 이미 저장된 이름으로 통일(제목 형식 차이로 다른 웹툰으로 갈라지는 것 방지)
+            val par = parentUrl(url)
+            loadSeries().firstOrNull { par != null && it.base == par }?.let { parsed = it.name to parsed!!.second }
+        }
         // 제목이 'N화' 형식이 아니면: 로딩이 끝나고 제목이 2회 연속 같을 때(제목이 늦게 바뀌는 사이트 대기) 주소를 키로 사용
-        if (parsed == null && (web.progress < 100 || titleStable < 2)) return
-        val key = if (parsed != null) norm(parsed.first) + "|" + parsed.second else "u|" + url.substringBefore('#')
+        val pr = parsed
+        if (pr == null && (web.progress < 100 || titleStable < 2)) return
+        val key = if (pr != null) norm(pr.first) + "|" + pr.second else "u|" + url.substringBefore('#')
         if (key == curKey) return
         curKey = key; saving = false // 새 화/페이지로 바뀌면(SPA 포함) 복원이 끝나기 전엔 저장하지 않음
         if (resumeAuto) { resumeAuto = false; handler.postDelayed({ applyAuto(true) }, 2000) } // 자동으로 다음 화에 넘어왔으면 2초 뒤부터 다시 스크롤
-        if (parsed != null) {
-            val (name, ep) = parsed
+        if (pr != null) {
+            val (name, ep) = pr
             val l = loadSeries()
             val sr = l.firstOrNull { it.key == norm(name) } ?: Series(name, norm(name), ep, ep, mutableSetOf(), "", 0L).also { l.add(it) }
             parentUrl(web.url)?.let { sr.base = it }
