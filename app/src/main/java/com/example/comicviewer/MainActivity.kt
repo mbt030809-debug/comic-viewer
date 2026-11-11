@@ -908,19 +908,15 @@ class MainActivity : Activity() {
     }
     private fun cleanUrl(u: String?) = u?.substringBefore('#')?.substringBefore('?')?.trimEnd('/')
 
-    /** 웹툰 첫 페이지(회차 목록): 주소가 저장된 목록 주소와 같거나, 제목/본문에 저장된 웹툰명이 있으면 마지막으로 본 화를 알림 */
-    private fun showSeriesNotice(key: String, retry: Int = 0) {
+    /** 저장된 웹툰의 목록(첫 페이지) 주소: 회차 주소의 상위 경로. 예전 기록은 마지막으로 본 회차 주소에서 계산 */
+    private fun baseOf(sr: Series) = sr.base.ifEmpty { parentUrl(sr.url) ?: "" }
+
+    /** 웹툰 첫 페이지(회차 목록)에 들어갈 때만: 주소가 저장된 웹툰의 목록 주소와 같으면 마지막으로 본 화를 알림(제목·본문 글자는 오탐이 많아 쓰지 않음) */
+    private fun showSeriesNotice(key: String) {
         if (curKey != key) return
-        val all = loadSeries()
-        fun toast(sr: Series) = showNotice("${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) "  (최대 ${sr.max}화)" else "")
-        val here = cleanUrl(web.url)
-        all.firstOrNull { it.base.isNotEmpty() && it.base == here }?.let { toast(it); return }
-        web.evaluateJavascript("(function(){var t=[document.title];var m=document.querySelector('meta[property=\"og:title\"]');if(m)t.push(m.content);[].forEach.call(document.querySelectorAll('h1,h2,h3'),function(e){t.push(e.innerText)});t.push((document.body&&document.body.innerText||'').slice(0,1200));return t.join(' ')})()") { r ->
-            if (curKey != key) return@evaluateJavascript
-            val text = norm(try { org.json.JSONTokener(r ?: "").nextValue() as? String ?: "" } catch (_: Exception) { "" })
-            val hit = all.filter { it.key.length >= 2 && text.contains(it.key) }.minWithOrNull(compareBy<Series>({ text.indexOf(it.key) }, { -it.key.length })) // 가장 앞에 나오는 이름(제목 영역) 우선
-            if (hit != null) toast(hit) else if (retry < 2) handler.postDelayed({ showSeriesNotice(key, retry + 1) }, 2500) // 목록이 늦게 그려지는 사이트 대비
-        }
+        val here = cleanUrl(web.url) ?: return
+        val sr = loadSeries().firstOrNull { baseOf(it).isNotEmpty() && baseOf(it) == here } ?: return
+        showNotice("${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) "  (최대 ${sr.max}화)" else "")
     }
     private var titleStable = 0
 
@@ -931,7 +927,7 @@ class MainActivity : Activity() {
         val title = web.title ?: ""
         if (title == lastTitle) titleStable++ else { lastTitle = title; titleStable = 0 }
         var parsed = parseTitle(title)
-        if (parsed != null && loadSeries().any { it.base.isNotEmpty() && it.base == cleanUrl(url) }) parsed = null // 목록 주소면 회차가 아님('총 15화' 같은 제목 오인 방지)
+        if (parsed != null && loadSeries().any { baseOf(it).isNotEmpty() && baseOf(it) == cleanUrl(url) }) parsed = null // 목록 주소면 회차가 아님('총 15화' 같은 제목 오인 방지)
         if (parsed != null) { // 같은 웹툰 목록 주소 아래 회차면 이미 저장된 이름으로 통일(제목 형식 차이로 다른 웹툰으로 갈라지는 것 방지)
             val par = parentUrl(url)
             loadSeries().firstOrNull { par != null && it.base == par }?.let { parsed = it.name to parsed!!.second }
