@@ -895,6 +895,12 @@ class MainActivity : Activity() {
     }
 
     private var lastTitle = ""
+    private val hideNotice = Runnable { findViewById<View>(R.id.noticeView).visibility = View.GONE }
+    private fun showNotice(text: String) {
+        val v = findViewById<TextView>(R.id.noticeView)
+        v.text = text; v.visibility = View.VISIBLE
+        handler2.removeCallbacks(hideNotice); handler2.postDelayed(hideNotice, 6000)
+    }
     private fun parentUrl(u: String?): String? {
         val x = u?.substringBefore('#')?.substringBefore('?')?.trimEnd('/') ?: return null
         val i = x.lastIndexOf('/'); val schemeEnd = x.indexOf("://") + 2
@@ -906,7 +912,7 @@ class MainActivity : Activity() {
     private fun showSeriesNotice(key: String, retry: Int = 0) {
         if (curKey != key) return
         val all = loadSeries()
-        fun toast(sr: Series) = Toast.makeText(this, "${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) " (최대 ${sr.max}화)" else "", Toast.LENGTH_LONG).show()
+        fun toast(sr: Series) = showNotice("${sr.name}  ${sr.last}화까지 봄" + if (sr.max > sr.last) "  (최대 ${sr.max}화)" else "")
         val here = cleanUrl(web.url)
         all.firstOrNull { it.base.isNotEmpty() && it.base == here }?.let { toast(it); return }
         web.evaluateJavascript("(function(){var t=[document.title];var m=document.querySelector('meta[property=\"og:title\"]');if(m)t.push(m.content);[].forEach.call(document.querySelectorAll('h1,h2,h3'),function(e){t.push(e.innerText)});t.push((document.body&&document.body.innerText||'').slice(0,1200));return t.join(' ')})()") { r ->
@@ -925,6 +931,7 @@ class MainActivity : Activity() {
         val title = web.title ?: ""
         if (title == lastTitle) titleStable++ else { lastTitle = title; titleStable = 0 }
         var parsed = parseTitle(title)
+        if (parsed != null && loadSeries().any { it.base.isNotEmpty() && it.base == cleanUrl(url) }) parsed = null // 목록 주소면 회차가 아님('총 15화' 같은 제목 오인 방지)
         if (parsed != null) { // 같은 웹툰 목록 주소 아래 회차면 이미 저장된 이름으로 통일(제목 형식 차이로 다른 웹툰으로 갈라지는 것 방지)
             val par = parentUrl(url)
             loadSeries().firstOrNull { par != null && it.base == par }?.let { parsed = it.name to parsed!!.second }

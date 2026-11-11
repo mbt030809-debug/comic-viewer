@@ -54,6 +54,13 @@
     <View android:id="@+id/refDot" android:layout_width="8dp" android:layout_height="8dp"
         android:layout_gravity="center" android:background="@drawable/ref_dot" android:visibility="gone" />
 
+    <!-- 알림 막대(마지막으로 본 화 등) -->
+    <TextView android:id="@+id/noticeView" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="110dp"
+        android:background="#E6222222" android:textColor="#FFFFFF" android:textSize="16sp"
+        android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="10dp" android:paddingBottom="10dp"
+        android:elevation="8dp" android:visibility="gone" />
+
     <Button android:id="@+id/nextBtn" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="24dp"
         android:text="다음화 ▶" android:visibility="gone" />
