@@ -1210,11 +1210,11 @@ function lazySrc(i){var n=['data-src','data-original','data-lazy-src','data-lazy
  for(var k=0;k<n.length;k++){var v=i.getAttribute(n[k]);if(v&&/^(https?:)?\/\/|^\/|\.(jpe?g|png|webp|gif)/i.test(v))return v}
  return null}
 var swept=0;
-function needSweep(imgs){return imgs.some(function(i){return !i.naturalWidth&&(i.getBoundingClientRect().height>=100||lazySrc(i)||i.loading=='lazy')})}
+function needSweep(imgs){return imgs.some(function(i){return !i.naturalWidth&&!lazySrc(i)&&i.loading!='lazy'&&(!i.getAttribute('src')||i.getBoundingClientRect().height>=100)})} // 주소 속성도 없고 스크롤해야만 뜨는 이미지가 있을 때만 훑기 필요
 function sweep(){swept=1;var st=box('cv-diag','bottom:0;background:#c00');st.textContent='두쪽 보기: 이미지 불러오는 중...';
  var y=0,n=0;(function step(){var H=window.innerHeight;window.scrollTo(0,y);y+=H*0.8;n++;
-  if(y<document.documentElement.scrollHeight&&n<30)setTimeout(step,200);
-  else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},800)})();}
+  if(y<document.documentElement.scrollHeight&&n<30)setTimeout(step,120);
+  else setTimeout(function(){window.scrollTo(0,0);st.remove();swept=2;tick()},500)})();}
 function collapse(e){e.style.display='none';var hs=[e];e.__cvhs=hs;var p=e.parentElement;
  while(p&&p!==document.body&&p!==document.documentElement&&!p.closest('.cv-keep')){
   var vis=[].some.call(p.children,function(c){if(c===e||c.style.display==='none'||getComputedStyle(c).display==='none')return false;
@@ -1253,7 +1253,7 @@ function tick0(){
  imgs.forEach(function(i){
   if(i.__cvi===undefined)i.__cvi=cnt++;
   var d=lazySrc(i);
-  if(d&&Date.now()-t0>4000&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&& // 사이트가 세션/토큰을 준비하기 전에 이미지를 강제로 요청하지 않도록 4초 대기
+  if(d&&Date.now()-t0>(o.two?1200:4000)&&!i.__cvl&&(!i.src||i.src.indexOf('data:')==0||i.naturalWidth<2)&& // 사이트가 세션/토큰을 준비하기 전에 이미지를 강제로 요청하지 않도록 4초 대기
    (o.two||i.getBoundingClientRect().top<window.innerHeight*2)){
    i.__cvl=1;i.loading='eager';i.src=d;}
   else if(o.two&&i.loading=='lazy')i.loading='eager';
@@ -1271,7 +1271,7 @@ function tick0(){
  if(!o.two)return;
  if(root){var live={};imgs.forEach(function(i){live[i.__cvi]=1});strips.forEach(function(s){[].slice.call(s.children).forEach(function(c){if(!live[c.__cvi])c.remove()})})}
  if(!anchorTaken)takeAnchor(bigs);
- if(!root){if(swept==0&&(bigs.length<4||needSweep(imgs))){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
+ if(!root){if(swept==0&&needSweep(imgs)){sweep();return}if(swept==1)return;if(!bigs.length)return;build()}
  bigs.forEach(function(i){if(i.__cva||i.__cvx)return;i.__cva=1;add(i);});
  upd();restoreAnchor();
 }
