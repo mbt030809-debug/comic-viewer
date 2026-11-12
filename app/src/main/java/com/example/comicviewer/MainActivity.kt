@@ -1124,7 +1124,7 @@ class MainActivity : Activity() {
         group("이동") {
             if (two) bar("거리", 10, 300, pageRatio2, { "$it%" }) { pageRatio2 = it }
             else bar("거리", 10, 300, pageRatio, { "$it%" }) { pageRatio = it }
-            bar("시간", 0, 2000, smoothMs, { if (it == 0) "즉시" else "${it}ms" }) { smoothMs = it / 100 * 100 }
+            bar("시간", 0, 200, smoothMs / 10, { if (it == 0) "즉시" else "${it * 10}ms" }) { smoothMs = it * 10 } // 10ms 단위
             bar("꾹 누름 속도", 100, 5000, holdSpeed, { "${it}px/s" }) { holdSpeed = it / 50 * 50 }
         }
         group("자동") {
